@@ -81,8 +81,10 @@ material <- function(board, piece.values) {
                      rk.val * str_count(pieces, "r") +
                      qn.val * str_count(pieces, "q"))
     
-    material <- white.values - black.values
-    material
+    c(white.values, black.values)
+    
+#     material <- white.values - black.values
+#     material
 }
 
 mobility <- function(board){
@@ -116,9 +118,10 @@ material.mobility.game.matrix <- function(pgn) {
 # =============================================================================
 
 game.matrix <- material.mobility.game.matrix(pgn)
-print(mean(game.matrix[1,]))                # mean material in this game
-print(mean(game.matrix[2, c(TRUE, FALSE)])) # mean white mobility
-print(mean(game.matrix[2, c(FALSE, TRUE)])) # mean black mobility
+print(mean(game.matrix[1,]))                # mean white material in this game
+print(mean(game.matrix[2,]))                # mean black material
+print(mean(game.matrix[3, c(TRUE, FALSE)])) # mean white mobility
+print(mean(game.matrix[3, c(FALSE, TRUE)])) # mean black mobility
 
 # Some useful stuff I may need:
 # turn          <- board$turn()                  # whose turn, w or b?
