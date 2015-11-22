@@ -25,15 +25,20 @@
 #   Chess Visualization Code from:
 #   http://jkunst.com/r/visualizing-chess-data-with-ggplot/
 #
-# I downloaded 1.6M master level games (ELO>2000) from:
+# I downloaded 1,696,727 master level games (ELO>2000) from:
 # http://www.kingbase-chess.net on 11/16/2015
 # I preprocessed and saved that data into .RData format using Joshua Kunst's
 # 01_pgn_parser.R code. That data resides in file chess-db.RData
 
 # ========================== Set up Environment ===============================
 library("rchess")
-# library("dplyr") # DO I REALLY NEED THIS??????????????????????
 library("stringr")
+# When I try to use parallel processing, it gives err msg: object 'Chess' not found 
+# library("doParallel") # This will also load parallel package
+# cl <- makeCluster(8)
+# registerDoParallel(cl)
+# detectCores()
+# # 8
 
 setwd("~/Documents/R/Chess/MaterialVsMobility")
 
@@ -44,21 +49,18 @@ load("chess-db.RData") # sets 'dfgames' to 1,696,727 observations of 11 vars
 piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"),
                            Value=c(1, 3, 3, 5, 9))
 
-# In game 4 of dfgames, Karpov as white lost to Morozevich.
-pgn <- dfgames[4, 11]$pgn # col 11 is the pgn data, returned as 1x1 df 
+# First 4 games are: draw, draw, white, black
+moves.results.df <- as.data.frame(dfgames[1:1000, c("pgn", "result")])
+# of first 1k games: 252 black wins, 354 white, 394 draws
 
-# 1.Nf3 d5 2.g3 c6 3.Bg2 Bf5 4.c4 e6 5.Qb3 Qb6 6.d3 Nf6 7.Be3 Qxb3 8.axb3 a6 
-# 9.Nh4 Bg6 10.f4 Nbd7 11.h3 Bb4+ 12.Kd1 O-O 13.Nd2 Rfd8 14.Kc2 b5 15.Rhd1  a5 16.Nxg6 hxg6 
-# 17.Nf3 Re8 18.Nd4 Rac8 19.Bd2 Nh5 20.cxb5 cxb5+ 21.Kb1  Nxg3 22.Nxb5 Rb8 23.Nd4 Nc5 
-# 24.Be3 Nf5 25.Nxf5 gxf5 26.Ka2 Nxb3 27.Rab1  Bd6 28.Ba7 Rb4 29.e4 Ra8 30.Be3 Rab8
+# It took c. 21 mins to process 1,000 games.  Thus, whole dfgames db would 
+# take roughly: 
+# (1696727/1000) * 21 = 35,631 mins or 593.9 hours or 24.7 days
 
 # ============ define functions for material and mobility =====================
 
 material <- function(board, piece.values) {
-    # return the relative material advantage of white vs. black
-    # white advantage: material > 0
-    # black advantage: material < 0
-    # no advantage:    material = 0
+    # return the material of white & black for current position
     pn.val <- piece.values[piece.values$Piece=="p", 2]
     kt.val <- piece.values[piece.values$Piece=="n", 2]
     bp.val <- piece.values[piece.values$Piece=="b", 2]
@@ -82,20 +84,18 @@ material <- function(board, piece.values) {
                      qn.val * str_count(pieces, "q"))
     
     c(white.values, black.values)
-    
-#     material <- white.values - black.values
-#     material
 }
 
 mobility <- function(board){
-    # returns number of possible moves at current position
+    # returns number of legal moves at current position
     length(board$moves())
 }
 
 material.mobility.game.matrix <- function(pgn) {
-    # return matrix of material (row 1) and mobility (row 2)
+    # return matrix of material (row 1, white; row 2, black) and mobility (row 3)
     # before every move in game plus mat/mob of final position
-    # In row 2, mobility, the odd numbered columns refer to white's mobility
+    # In row 3, mobility, the odd numbered columns refer to white's mobility
+    # Columns correspond to each half-move of the game
     board   <- Chess$new()
     board$load_pgn(pgn)
     all.san <- board$history()  # pgn as vector without move nums
@@ -103,7 +103,7 @@ material.mobility.game.matrix <- function(pgn) {
     
     get.mat.mob <- function(san){  #called by apply in next line after this fn
        #return position's material/mobility, then make next move
-        mat <- material(board, piece.values) # relative material: w - b
+        mat <- material(board, piece.values) # material of w & b
         mob <- mobility(board)               # num legal moves on board
         board$move(san)                      # make move taken by player
         c(mat, mob)
@@ -115,17 +115,53 @@ material.mobility.game.matrix <- function(pgn) {
     cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob incl. final position 
 }
 
+mat.mob.by.result <- function(pgns){ 
+    # compute mean of white/black material & white/black mobility
+    # for wins by black, wins by white and draws
+    # pgns is a vector of pgn strings, i.e. games
+    if (length(pgns)>1) {
+        game.array  <- apply(as.matrix(pgns), 1, material.mobility.game.matrix)
+        game.stats.multiple(game.array)
+    }
+    else { #there is only one game in the group
+        game.matrix <- material.mobility.game.matrix(pgns)
+        game.stats.single(game.matrix)
+    }
+}
+
+game.stats.multiple <- function(game.array){
+    # return mean material and mobility from mutliple games
+    stats.matrix <- sapply(game.array, game.stats.single)
+    # each column of matrix is a game
+    # row 1 is mean white material for each game
+    # rwo 2 is mean black material
+    # row 3 is mean white mobility
+    # row 4 is mean black mobility
+    stats.mean <- apply(stats.matrix, 1, mean)
+    stats.stdv <- apply(stats.matrix, 1, sd)
+    rbind(stats.mean, stats.stdv) 
+    #return mean and std dev for w/b material and mobility
+}
+
+game.stats.single <- function(game.matrix){
+    # return mean material and mobility from single game
+    w.mat <- mean(game.matrix[1,])                # mean white material in this game
+    b.mat <- mean(game.matrix[2,])                # mean black material
+    w.mob <- mean(game.matrix[3, c(TRUE, FALSE)]) # mean white mobility
+    b.mob <- mean(game.matrix[3, c(FALSE, TRUE)]) # mean black mobility
+    c(w.mat, b.mat, w.mob, b.mob)
+}
+
 # =============================================================================
 
-game.matrix <- material.mobility.game.matrix(pgn)
-print(mean(game.matrix[1,]))                # mean white material in this game
-print(mean(game.matrix[2,]))                # mean black material
-print(mean(game.matrix[3, c(TRUE, FALSE)])) # mean white mobility
-print(mean(game.matrix[3, c(FALSE, TRUE)])) # mean black mobility
+mat.mob <- tapply(moves.results.df$pgn,
+                  list(moves.results.df$result), 
+                  mat.mob.by.result)
+# for each group, there are 4 stats computed:
+# mean white material, mean black material, mean white mobility, mean black mobility
+mat.mob[1] # stats for black wins
+mat.mob[2] # stats for white wins
+mat.mob[3] # stats for draws
 
-# Some useful stuff I may need:
-# turn          <- board$turn()                  # whose turn, w or b?
-# num.moves     <- length(all.san) # number of half moves
-# white.moves   <- ceiling(num.moves/2)      # number of white moves
-# black.moves   <- floor(num.moves/2)        # number of black moves
+# stopCluster(cl)
 
