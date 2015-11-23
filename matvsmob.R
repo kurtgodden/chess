@@ -33,12 +33,9 @@
 # ========================== Set up Environment ===============================
 library("rchess")
 library("stringr")
-# When I try to use parallel processing, it gives err msg: object 'Chess' not found 
-# library("doParallel") # This will also load parallel package
-# cl <- makeCluster(8)
-# registerDoParallel(cl)
-# detectCores()
-# # 8
+library("parallel") 
+cores <- detectCores()
+# 8
 
 setwd("~/Documents/R/Chess/MaterialVsMobility")
 
@@ -53,9 +50,11 @@ piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"),
 moves.results.df <- as.data.frame(dfgames[1:1000, c("pgn", "result")])
 # of first 1k games: 252 black wins, 354 white, 394 draws
 
-# It took c. 21 mins to process 1,000 games.  Thus, whole dfgames db would 
-# take roughly: 
+# It took c. 21 mins to process 1,000 games with non-parallel code.  
+# Thus, whole dfgames db would take roughly: 
 # (1696727/1000) * 21 = 35,631 mins or 593.9 hours or 24.7 days
+# The parallel version took about 8 mins giving: 
+# 13573.82 mins or 226.2303 hrs or 9.4 days!
 
 # ============ define functions for material and mobility =====================
 
@@ -101,15 +100,14 @@ material.mobility.game.matrix <- function(pgn) {
     all.san <- board$history()  # pgn as vector without move nums
     board   <- Chess$new()      # reset board to step thru moves
     
-    get.mat.mob <- function(san){  #called by apply in next line after this fn
-       #return position's material/mobility, then make next move
-        mat <- material(board, piece.values) # material of w & b
-        mob <- mobility(board)               # num legal moves on board
-        board$move(san)                      # make move taken by player
-        c(mat, mob)
-    }
-    
-    mat.mob.matrix <- apply(as.matrix(all.san), 1, get.mat.mob)
+    mat.mob.matrix <- apply(as.matrix(all.san), 1, 
+                            function(san){
+                                #return position's material/mobility, then make next move
+                                mat <- material(board, piece.values) # material of w & b
+                                mob <- mobility(board)               # num legal moves on board
+                                board$move(san)                      # make move taken by player
+                                c(mat, mob)
+                            })
     mat            <- material(board, piece.values) # material at end position
     mob            <- mobility(board)               # mobility at end position
     cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob incl. final position 
@@ -131,13 +129,15 @@ mat.mob.by.result <- function(pgns){
 
 game.stats.multiple <- function(game.array){
     # return mean material and mobility from mutliple games
-    stats.matrix <- sapply(game.array, game.stats.single)
+    # vapply is faster than sapply and also provides names
+    stats.matrix <- vapply(game.array, game.stats.single,
+                           c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0)) 
     # each column of matrix is a game
     # row 1 is mean white material for each game
     # rwo 2 is mean black material
     # row 3 is mean white mobility
     # row 4 is mean black mobility
-    stats.mean <- apply(stats.matrix, 1, mean)
+    stats.mean <- rowMeans(stats.matrix) # faster than apply/mean
     stats.stdv <- apply(stats.matrix, 1, sd)
     rbind(stats.mean, stats.stdv) 
     #return mean and std dev for w/b material and mobility
@@ -152,16 +152,30 @@ game.stats.single <- function(game.matrix){
     c(w.mat, b.mat, w.mob, b.mob)
 }
 
+# get.mat.mob <- function(df) {
+#     # this is the top-level non-parallel function
+#     tapply(df$pgn, list(df$result), mat.mob.by.result)
+# }
+
+get.mat.mob.parallel <- function(df) {
+    # this is the top-level function
+    # This parallel version takes 38% the time of non-parallel get.mat.mob!
+    
+    b <- df[df$result == "0-1",     "pgn"]
+    w <- df[df$result == "1-0",     "pgn"]
+    d <- df[df$result == "1/2-1/2", "pgn"]
+    
+    mclapply(list(b, w, d), mat.mob.by.result, mc.cores = cores)
+}
+
+
 # =============================================================================
 
-mat.mob <- tapply(moves.results.df$pgn,
-                  list(moves.results.df$result), 
-                  mat.mob.by.result)
+system.time(mat.mob <- get.mat.mob.parallel(moves.results.df))
 # for each group, there are 4 stats computed:
 # mean white material, mean black material, mean white mobility, mean black mobility
-mat.mob[1] # stats for black wins
-mat.mob[2] # stats for white wins
-mat.mob[3] # stats for draws
+mat.mob[[1]] # stats for black wins
+mat.mob[[2]] # stats for white wins
+mat.mob[[3]] # stats for draws
 
-# stopCluster(cl)
 
