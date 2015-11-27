@@ -29,6 +29,30 @@
 # http://www.kingbase-chess.net on 11/16/2015
 # I preprocessed and saved that data into .RData format using Joshua Kunst's
 # 01_pgn_parser.R code. That data resides in file chess-db.RData
+#
+# Here are the stats of the first 1000 games:
+# > mat.mob[[1]] # stats for black wins
+# w.mat     b.mat     w.mob     b.mob
+# stats.mean 29.579637 29.888283 30.710644 33.283729
+# stats.stdv  5.081028  4.958256  4.116537  4.269052
+# > mat.mob[[2]] # stats for white wins
+# w.mat     b.mat     w.mob     b.mob
+# stats.mean 29.323026 28.978749 33.067158 30.381365
+# stats.stdv  5.089341  5.258845  4.415415  4.229633
+# > mat.mob[[3]] # stats for draws
+# w.mat     b.mat     w.mob     b.mob
+# stats.mean 29.457469 29.463118 30.440890 30.331888
+# stats.stdv  6.902642  6.910577  4.310082  4.794257
+# > 
+#     > # now compute same stats but for population w/o regard for outcome
+#     > # This code is a shame because it's actually recomputing what has already been done!
+#     > system.time(mat.mob.population <- get.mat.mob.population(moves.results.df))
+# user   system  elapsed 
+# 1237.805   15.791 1246.195 
+# > mat.mob.population[[1]]
+# w.mat     b.mat    w.mob     b.mob
+# stats.mean 29.440662 29.398793 31.43857 31.093267
+# stats.stdv  5.864516  5.904278  4.46326  4.643391
 
 # ========================== Set up Environment ===============================
 library("rchess")
@@ -47,7 +71,7 @@ piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"),
                            Value=c(1, 3, 3, 5, 9))
 
 # First 4 games are: draw, draw, white, black
-moves.results.df <- as.data.frame(dfgames[1:1000, c("pgn", "result")])
+moves.results.df <- as.data.frame(dfgames[1:5, c("pgn", "result")])
 # of first 1k games: 252 black wins, 354 white, 394 draws
 
 # It took c. 21 mins to process 1,000 games with non-parallel code.  
@@ -55,6 +79,7 @@ moves.results.df <- as.data.frame(dfgames[1:1000, c("pgn", "result")])
 # (1696727/1000) * 21 = 35,631 mins or 593.9 hours or 24.7 days
 # The parallel version took about 8 mins giving: 
 # 13573.82 mins or 226.2303 hrs or 9.4 days!
+# 100,000 games should take 13.3 hours or so.
 
 # ============ define functions for material and mobility =====================
 
@@ -114,16 +139,14 @@ material.mobility.game.matrix <- function(pgn) {
 }
 
 mat.mob.by.result <- function(pgns){ 
-    # compute mean of white/black material & white/black mobility
-    # for wins by black, wins by white and draws
+    # return array of stats PER MOVE of every game
+    # 1st item in array are wins by black, then wins by white then draws
     # pgns is a vector of pgn strings, i.e. games
     if (length(pgns)>1) {
         game.array  <- apply(as.matrix(pgns), 1, material.mobility.game.matrix)
-        game.stats.multiple(game.array)
     }
     else { #there is only one game in the group
-        game.matrix <- material.mobility.game.matrix(pgns)
-        game.stats.single(game.matrix)
+        game.matrix <- list(material.mobility.game.matrix(pgns))
     }
 }
 
@@ -156,26 +179,45 @@ game.stats.single <- function(game.matrix){
 #     # this is the top-level non-parallel function
 #     tapply(df$pgn, list(df$result), mat.mob.by.result)
 # }
+# 
+# system.time(mat.mob <- get.mat.mob(moves.results.df)) 
 
-get.mat.mob.parallel <- function(df) {
+# get.mat.mob.population <- function(df) { 
+#     # this is a top-level function
+#     # Compute stats for entire population of games,
+#     # i.e. do not split by outomes.
+#     
+#     all <- df[, "pgn"]
+#     # use one core for each group
+#     lapply(list(all), mat.mob.by.result) 
+# }
+
+get.mat.mob.parallel <- function(df) {# debug printing doesn't work when parallel
     # this is the top-level function
     # This parallel version takes 38% the time of non-parallel get.mat.mob!
     
     b <- df[df$result == "0-1",     "pgn"]
     w <- df[df$result == "1-0",     "pgn"]
     d <- df[df$result == "1/2-1/2", "pgn"]
+    # use one core for each group
+    mat.mob.array <- mclapply(list(b, w, d), mat.mob.by.result, mc.cores = 3) 
+#    print(mat.mob.array)
     
-    mclapply(list(b, w, d), mat.mob.by.result, mc.cores = cores)
-}
-
+    mat.mob.population <- append(append(mat.mob.array[[1]], 
+                                        mat.mob.array[[2]]), 
+                                 mat.mob.array[[3]])
+    
+    mat.mob.array[[4]] <- mat.mob.population
+    print(paste("black wins: ", length(b), " white wins: ", length(w), " draws: ", length(d))) 
+    mclapply(mat.mob.array, game.stats.multiple, mc.cores=4)
+} 
 
 # =============================================================================
 
 system.time(mat.mob <- get.mat.mob.parallel(moves.results.df))
-# for each group, there are 4 stats computed:
-# mean white material, mean black material, mean white mobility, mean black mobility
+
 mat.mob[[1]] # stats for black wins
 mat.mob[[2]] # stats for white wins
 mat.mob[[3]] # stats for draws
-
+mat.mob[[4]] # stats for all games
 
