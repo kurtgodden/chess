@@ -22,9 +22,6 @@
 #   pgn parser/converter at:
 #   https://github.com/jbkunst/chess-db 
 #
-#   Chess Visualization Code from:
-#   http://jkunst.com/r/visualizing-chess-data-with-ggplot/
-#
 # I downloaded 1,696,727 master level games (ELO>2000) from:
 # http://www.kingbase-chess.net on 11/16/2015
 # I preprocessed and saved that data into .RData format using Joshua Kunst's
@@ -43,43 +40,43 @@
 # w.mat     b.mat     w.mob     b.mob
 # stats.mean 29.457469 29.463118 30.440890 30.331888
 # stats.stdv  6.902642  6.910577  4.310082  4.794257
-# > 
-#     > # now compute same stats but for population w/o regard for outcome
-#     > # This code is a shame because it's actually recomputing what has already been done!
-#     > system.time(mat.mob.population <- get.mat.mob.population(moves.results.df))
-# user   system  elapsed 
-# 1237.805   15.791 1246.195 
-# > mat.mob.population[[1]]
+# > mat.mob[[4]] # stats for all games
 # w.mat     b.mat    w.mob     b.mob
 # stats.mean 29.440662 29.398793 31.43857 31.093267
 # stats.stdv  5.864516  5.904278  4.46326  4.643391
 
-# ========================== Set up Environment ===============================
-library("rchess")
-library("stringr")
-library("parallel") 
-cores <- detectCores()
+# It took c. 21 mins to process 1,000 games with non-parallel code.  
+# Thus, whole dfgames db would take roughly: 
+# (1696727/1000) * 21 = 35,631 mins or 593.9 hours or 24.7 days
+# The parallel version with 3 cores (b, w, d) would take for all games: 
+# > (1696727/1000) * 8.052783 / 60 /24
+# [1] 9.488454 DAYS for all 1.7M games
+# 100,000 games should take 13.4213 hours or so.
+# The revised parallel version using 6 cores:
+# > (1696727/1000) * 5.533333 / 60 / 24
+# [1] 6.51983, so only 6.5 days vs. 24.7 days for entire game database!
+# 100,000 games should take about 9.2 hours   
+# =============== Set up Environment and load Chess Game Data ==================
+rm(list = ls())
+library("rchess")   # R package implementing interface to chess code
+library("stringr")  # rchess wants this
+library("parallel") # allows huge decrease in processing time
+library(pryr)       # fns to assist in memory analysis
+# detectCores()
 # 8
-
 setwd("~/Documents/R/Chess/MaterialVsMobility")
 
 # ========================== Misc Parameters ==================================
 
 load("chess-db.RData") # sets 'dfgames' to 1,696,727 observations of 11 vars
-
-piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"),
-                           Value=c(1, 3, 3, 5, 9))
-
+# > dim(dfgames[dfgames$result == "0-1",     "pgn"])
+# [1] 468441      1
+# > dim(dfgames[dfgames$result == "1-0",     "pgn"])
+# [1] 620745      1
+# > dim(dfgames[dfgames$result == "1/2-1/2",     "pgn"])
+# [1] 607422      1
 # First 4 games are: draw, draw, white, black
-moves.results.df <- as.data.frame(dfgames[1:5, c("pgn", "result")])
 # of first 1k games: 252 black wins, 354 white, 394 draws
-
-# It took c. 21 mins to process 1,000 games with non-parallel code.  
-# Thus, whole dfgames db would take roughly: 
-# (1696727/1000) * 21 = 35,631 mins or 593.9 hours or 24.7 days
-# The parallel version took about 8 mins giving: 
-# 13573.82 mins or 226.2303 hrs or 9.4 days!
-# 100,000 games should take 13.3 hours or so.
 
 # ============ define functions for material and mobility =====================
 
@@ -135,7 +132,7 @@ material.mobility.game.matrix <- function(pgn) {
                             })
     mat            <- material(board, piece.values) # material at end position
     mob            <- mobility(board)               # mobility at end position
-    cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob incl. final position 
+    cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob including end position 
 }
 
 mat.mob.by.result <- function(pgns){ 
@@ -182,40 +179,75 @@ game.stats.single <- function(game.matrix){
 # 
 # system.time(mat.mob <- get.mat.mob(moves.results.df)) 
 
-# get.mat.mob.population <- function(df) { 
-#     # this is a top-level function
-#     # Compute stats for entire population of games,
-#     # i.e. do not split by outomes.
-#     
-#     all <- df[, "pgn"]
-#     # use one core for each group
-#     lapply(list(all), mat.mob.by.result) 
-# }
-
-get.mat.mob.parallel <- function(df) {# debug printing doesn't work when parallel
+get.mat.mob.parallel <- function(df) {
     # this is the top-level function
-    # This parallel version takes 38% the time of non-parallel get.mat.mob!
+    # This parallel version takes 29% the time of non-parallel get.mat.mob!
     
-    b <- df[df$result == "0-1",     "pgn"]
-    w <- df[df$result == "1-0",     "pgn"]
-    d <- df[df$result == "1/2-1/2", "pgn"]
-    # use one core for each group
-    mat.mob.array <- mclapply(list(b, w, d), mat.mob.by.result, mc.cores = 3) 
-#    print(mat.mob.array)
+    b  <- df[df$result == "0-1",     "pgn"]
+    w  <- df[df$result == "1-0",     "pgn"]
+    d  <- df[df$result == "1/2-1/2", "pgn"]
     
-    mat.mob.population <- append(append(mat.mob.array[[1]], 
-                                        mat.mob.array[[2]]), 
-                                 mat.mob.array[[3]])
+    # get indices to allow splitting each group into 2 subgroups
+    blen <- length(b)     # number of black wins
+    bmid <- floor(blen/2) # index to mid point of black wins
+    bnxt <- bmid + 1      # index to next game after mid point
     
-    mat.mob.array[[4]] <- mat.mob.population
-    print(paste("black wins: ", length(b), " white wins: ", length(w), " draws: ", length(d))) 
+    wlen <- length(w)     # ditto for white
+    wmid <- floor(wlen/2)
+    wnxt <- wmid + 1
+    
+    dlen <- length(d)     # ditto for draws
+    dmid <- floor(dlen/2)
+    dnxt <- dmid + 1
+    print(paste("black wins: ", blen, " white wins: ", wlen, " draws: ", dlen)) 
+    
+    # split the black, white, and draw game lists into 2 parts each
+    # to maximize parallelization by using 2 cores each for b, w, and draws
+    b1   <- b[1:bmid]     # first half of black games
+    b2   <- b[bnxt:blen]  # second half of black games
+    w1   <- w[1:wmid]     # ditto for white
+    w2   <- w[wnxt:wlen]
+    d1   <- d[1:dmid]     # ditto for draws
+    d2   <- d[dnxt:dlen]
+    
+    # reclaim memory. Didn't free much up with 2,000 games
+    print(mem_change(rm(list = ("b"))))
+    print(mem_change(rm(list = ("w"))))
+    print(mem_change(rm(list = ("d"))))
+    
+    # use one core to process each of these 6 groups
+    mat.mob.array <- mclapply(list(b1, b2, w1, w2, d1, d2), mat.mob.by.result, 
+                              mc.cores = 6) 
+    # reconstitute the black, white and draw results
+    b.array       <- append(mat.mob.array[[1]],  # black mat/mob results
+                            mat.mob.array[[2]])
+    w.array       <- append(mat.mob.array[[3]],  # white mat/mob results
+                            mat.mob.array[[4]])
+    d.array       <- append(mat.mob.array[[5]],  # draw mat/mob results
+                            mat.mob.array[[6]])
+    # combine all into population results so we don't recompute that
+    p.array       <- append(append(b.array, w.array), d.array) 
+    
+    mat.mob.array <- array(list(b.array, w.array, d.array, p.array))
     mclapply(mat.mob.array, game.stats.multiple, mc.cores=4)
 } 
 
-# =============================================================================
+# ============================== Set Misc Params ===============================
+
+piece.values     <- data.frame(Piece=c("p", "n", "b", "r", "q"),
+                               Value=c(1, 3, 3, 5, 9))
+set.seed(42)
+sampleSize       <- 500    # number of games to analyze from dfgames
+indices          <- sample(nrow(dfgames), sampleSize)
+moves.results.df <- as.data.frame(dfgames[indices, c("pgn", "result")])
+mem_change(rm(list = ("dfgames"))) # reclaims about 1G of memory
+
+# ============================= Analyze Chess Games ============================
 
 system.time(mat.mob <- get.mat.mob.parallel(moves.results.df))
+system.time(mat.mob <- get.mat.mob.parallel.revised(moves.results.df))
 
+# This code takes roughly 6 mins/1000 games
 mat.mob[[1]] # stats for black wins
 mat.mob[[2]] # stats for white wins
 mat.mob[[3]] # stats for draws
