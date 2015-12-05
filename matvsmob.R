@@ -69,14 +69,11 @@ setwd("~/Documents/R/Chess/MaterialVsMobility")
 # ========================== Misc Parameters ==================================
 
 load("chess-db.RData") # sets 'dfgames' to 1,696,727 observations of 11 vars
-# > dim(dfgames[dfgames$result == "0-1",     "pgn"])
-# [1] 468441      1
-# > dim(dfgames[dfgames$result == "1-0",     "pgn"])
-# [1] 620745      1
-# > dim(dfgames[dfgames$result == "1/2-1/2",     "pgn"])
-# [1] 607422      1
+# 468441      black wins
+# 620745      white wins
+# 607422      draws
 # First 4 games are: draw, draw, white, black
-# of first 1k games: 252 black wins, 354 white, 394 draws
+# Of first 1k games: 252 black wins, 354 white, 394 draws
 
 # ============ define functions for material and mobility =====================
 
@@ -210,11 +207,6 @@ get.mat.mob.parallel <- function(df) {
     d1   <- d[1:dmid]     # ditto for draws
     d2   <- d[dnxt:dlen]
     
-    # reclaim memory. Didn't free much up with 2,000 games
-    print(mem_change(rm(list = ("b"))))
-    print(mem_change(rm(list = ("w"))))
-    print(mem_change(rm(list = ("d"))))
-    
     # use one core to process each of these 6 groups
     mat.mob.array <- mclapply(list(b1, b2, w1, w2, d1, d2), mat.mob.by.result, 
                               mc.cores = 6) 
@@ -227,25 +219,56 @@ get.mat.mob.parallel <- function(df) {
                             mat.mob.array[[6]])
     # combine all into population results so we don't recompute that
     p.array       <- append(append(b.array, w.array), d.array) 
+   
+     # plot histograms using stats from every move of every game
+    visualize.move.data(p.array, blen + wlen + dlen)
     
+    # get final statistics
     mat.mob.array <- array(list(b.array, w.array, d.array, p.array))
     mclapply(mat.mob.array, game.stats.multiple, mc.cores=4)
-} 
+}
+
+visualize.move.data <- function(move.data, num.games){
+    # plot histograms of data
+    p.df      <- as.data.frame(move.data)
+    num.moves <- ncol(p.df)
+    wht.moves <- round(num.moves/2)
+    blk.moves <- num.moves - wht.moves
+    hist(as.numeric(p.df[1,]),                               # black material
+         main=paste("Black Material in", num.games, "Master-Level Games"),
+         xlab=paste("Black Material Computed at each of", num.moves, "Moves"),
+         col="blue")
+         
+    hist(as.numeric(p.df[2,]),                               # white material
+         main=paste("White Material in", num.games, "Master-Level Games"),
+         xlab=paste("White Material Computed at each of", num.moves, "Moves"),
+         col="light blue") 
+    
+    hist(as.numeric(p.df[3, c(FALSE, TRUE)]),                # black mobility
+         main=paste("Black Mobility in", num.games, "Master-Level Games"),
+         xlab=paste("Black Mobility Computed for", blk.moves, "Black Moves"),
+         col="dark green") 
+    
+    hist(as.numeric(p.df[3, c(TRUE, FALSE)]),                # white mobility
+         main=paste("White Mobility in", num.games, "Master-Level Games"),
+         xlab=paste("White Mobility Computed for", wht.moves, " White Moves"),
+         col="green")
+}
 
 # ============================== Set Misc Params ===============================
 
 piece.values     <- data.frame(Piece=c("p", "n", "b", "r", "q"),
                                Value=c(1, 3, 3, 5, 9))
 set.seed(42)
-sampleSize       <- 500    # number of games to analyze from dfgames
+sampleSize       <- 2000    # number of games to analyze from dfgames
 indices          <- sample(nrow(dfgames), sampleSize)
+# indices <- 1:1000
 moves.results.df <- as.data.frame(dfgames[indices, c("pgn", "result")])
-mem_change(rm(list = ("dfgames"))) # reclaims about 1G of memory
+mem_change(rm(list = ("dfgames"))) # reclaims about 1G of memory for 1000 games
 
 # ============================= Analyze Chess Games ============================
 
 system.time(mat.mob <- get.mat.mob.parallel(moves.results.df))
-system.time(mat.mob <- get.mat.mob.parallel.revised(moves.results.df))
 
 # This code takes roughly 6 mins/1000 games
 mat.mob[[1]] # stats for black wins
