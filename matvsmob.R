@@ -6,14 +6,7 @@
 #  will be >0 and <0 when black wins, we would expect these two to relatively 
 #  cancel each other out, and for draws we would expect them to be roughly
 #  equal to zero.  But given that white begins with a small advantage, we
-#  expect white minus black to be very slightly positive overall.  To test if
-#  material and mobility are important factors in a win, we need to test:
-#   H0_mat_w: material_white = material_population 
-#   H0_mat_b: material_black = material_population
-#   H0_mat_d: material_white = material_black
-#   H0_mob_w: mobility_white = mobility_population 
-#   H0_mat_b: mobility_black = mobility_population
-#   H0_mat_d: mobility_white = mobility_black
+#  expect white minus black to be very slightly positive overall.  
 #
 #   rchess described at:
 #   http://jkunst.com/r/rchess-a-chess-package-for-r/
@@ -27,24 +20,21 @@
 # I preprocessed and saved that data into .RData format using Joshua Kunst's
 # 01_pgn_parser.R code. That data resides in file chess-db.RData
 #
-# Here are the stats of the first 1000 games:
-# > mat.mob[[1]] # stats for black wins
-# w.mat     b.mat     w.mob     b.mob
-# stats.mean 29.579637 29.888283 30.710644 33.283729
-# stats.stdv  5.081028  4.958256  4.116537  4.269052
-# > mat.mob[[2]] # stats for white wins
-# w.mat     b.mat     w.mob     b.mob
-# stats.mean 29.323026 28.978749 33.067158 30.381365
-# stats.stdv  5.089341  5.258845  4.415415  4.229633
-# > mat.mob[[3]] # stats for draws
-# w.mat     b.mat     w.mob     b.mob
-# stats.mean 29.457469 29.463118 30.440890 30.331888
-# stats.stdv  6.902642  6.910577  4.310082  4.794257
-# > mat.mob[[4]] # stats for all games
-# w.mat     b.mat    w.mob     b.mob
-# stats.mean 29.440662 29.398793 31.43857 31.093267
-# stats.stdv  5.864516  5.904278  4.46326  4.643391
-
+# Here are the stats of 5000 randomly-selected games: (193 mins to compute)
+#            w.mat     b.mat     w.mob     b.mob
+# stats.mean 29.574640 29.553987 33.13604 30.839317
+# stats.stdv  5.650526  5.680532  4.86725  4.354868
+#
+#  2000 random games:
+#            w.mat     b.mat     w.mob     b.mob
+# stats.mean 29.591335 29.583878 33.177407 30.775609
+# stats.stdv  5.705259  5.710414  4.905983  4.369868
+#
+# And 1000 random games:
+#            w.mat     b.mat     w.mob     b.mob
+# stats.mean 29.363866 29.334931 32.943453 30.77301
+# stats.stdv  5.736882  5.769887  4.967302  4.44095
+#
 # It took c. 21 mins to process 1,000 games with non-parallel code.  
 # Thus, whole dfgames db would take roughly: 
 # (1696727/1000) * 21 = 35,631 mins or 593.9 hours or 24.7 days
@@ -56,8 +46,11 @@
 # > (1696727/1000) * 5.533333 / 60 / 24
 # [1] 6.51983, so only 6.5 days vs. 24.7 days for entire game database!
 # 100,000 games should take about 9.2 hours   
+#
+# Revised again, using 8 cores: 5.2 mins/1000 games.
+# (1696727/1000) * 5.2 / 60 / 24 = 6.1 days
 # =============== Set up Environment and load Chess Game Data ==================
-rm(list = ls())
+
 library("rchess")   # R package implementing interface to chess code
 library("stringr")  # rchess wants this
 library("parallel") # allows huge decrease in processing time
@@ -132,9 +125,8 @@ material.mobility.game.matrix <- function(pgn) {
     cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob including end position 
 }
 
-mat.mob.by.result <- function(pgns){ 
+mat.mob.by.result <- function(pgns){  
     # return array of stats PER MOVE of every game
-    # 1st item in array are wins by black, then wins by white then draws
     # pgns is a vector of pgn strings, i.e. games
     if (length(pgns)>1) {
         game.array  <- apply(as.matrix(pgns), 1, material.mobility.game.matrix)
@@ -176,103 +168,132 @@ game.stats.single <- function(game.matrix){
 # 
 # system.time(mat.mob <- get.mat.mob(moves.results.df)) 
 
-get.mat.mob.parallel <- function(df) {
-    # this is the top-level function
-    # This parallel version takes 29% the time of non-parallel get.mat.mob!
+get.mat.mob.parallel <- function(df, game.result, num.games, num.cores) { 
+    # df is a data frame of games with only one variable: pgn
+    # game.result is a text string indicating the outcome of the games
+    # being analyzed: black, white, draw, or all
+    # num.games is the number of games being analyzed (==nrow(df))
+    # num.cores is the number of cores we can use for parallel processing
+    #   (currently 8 cores)
     
-    b  <- df[df$result == "0-1",     "pgn"]
-    w  <- df[df$result == "1-0",     "pgn"]
-    d  <- df[df$result == "1/2-1/2", "pgn"]
+    # This parallel version takes 25% the time of non-parallel get.mat.mob!
     
-    # get indices to allow splitting each group into 2 subgroups
-    blen <- length(b)     # number of black wins
-    bmid <- floor(blen/2) # index to mid point of black wins
-    bnxt <- bmid + 1      # index to next game after mid point
+    games.per.core <-  floor(num.games/num.cores)
+    g1.first <- 1
+    g1.last  <- games.per.core
+    g2.first <- g1.last + 1
+    g2.last  <- 2 * games.per.core
+    g3.first <- g2.last + 1
+    g3.last  <- 3 * games.per.core
+    g4.first <- g3.last + 1
+    g4.last  <- 4 * games.per.core
+    g5.first <- g4.last + 1
+    g5.last  <- 5 * games.per.core
+    g6.first <- g5.last + 1
+    g6.last  <- 6 * games.per.core
+    g7.first <- g6.last + 1
+    g7.last  <- 7 * games.per.core
+    g8.first <- g7.last + 1
+    g8.last  <- num.games
     
-    wlen <- length(w)     # ditto for white
-    wmid <- floor(wlen/2)
-    wnxt <- wmid + 1
+    # split df into 8 subsets to be processed by all 8 cores
+    g1 <- df[g1.first:g1.last, ]
+    g2 <- df[g2.first:g2.last, ] 
+    g3 <- df[g3.first:g3.last, ] 
+    g4 <- df[g4.first:g4.last, ] 
+    g5 <- df[g5.first:g5.last, ] 
+    g6 <- df[g6.first:g6.last, ] 
+    g7 <- df[g7.first:g7.last, ] 
+    g8 <- df[g8.first:g8.last, ] 
     
-    dlen <- length(d)     # ditto for draws
-    dmid <- floor(dlen/2)
-    dnxt <- dmid + 1
-    print(paste("black wins: ", blen, " white wins: ", wlen, " draws: ", dlen)) 
-    
-    # split the black, white, and draw game lists into 2 parts each
-    # to maximize parallelization by using 2 cores each for b, w, and draws
-    b1   <- b[1:bmid]     # first half of black games
-    b2   <- b[bnxt:blen]  # second half of black games
-    w1   <- w[1:wmid]     # ditto for white
-    w2   <- w[wnxt:wlen]
-    d1   <- d[1:dmid]     # ditto for draws
-    d2   <- d[dnxt:dlen]
-    
-    # use one core to process each of these 6 groups
-    mat.mob.array <- mclapply(list(b1, b2, w1, w2, d1, d2), mat.mob.by.result, 
-                              mc.cores = 6) 
-    # reconstitute the black, white and draw results
-    b.array       <- append(mat.mob.array[[1]],  # black mat/mob results
-                            mat.mob.array[[2]])
-    w.array       <- append(mat.mob.array[[3]],  # white mat/mob results
-                            mat.mob.array[[4]])
-    d.array       <- append(mat.mob.array[[5]],  # draw mat/mob results
-                            mat.mob.array[[6]])
-    # combine all into population results so we don't recompute that
-    p.array       <- append(append(b.array, w.array), d.array) 
-   
+    mat.mob.array <- mclapply(list(g1, g2, g3, g4, g5, g6, g7, g8), 
+                              mat.mob.by.result, 
+                              mc.cores = num.cores)     
+    # recombine results into single array
+    print("Restoring data array...")
+    g.array <- append(append(append(append(append(append(append(mat.mob.array[[1]], 
+                                                                mat.mob.array[[2]]),
+                                                         mat.mob.array[[3]]),
+                                                  mat.mob.array[[4]]),
+                                           mat.mob.array[[5]]),
+                                    mat.mob.array[[6]]),
+                             mat.mob.array[[7]]),
+                      mat.mob.array[[8]])  
+    print("Plotting histograms...")
      # plot histograms using stats from every move of every game
-    visualize.move.data(p.array, blen + wlen + dlen)
+    visualize.move.data(g.array, num.games, game.result) 
     
     # get final statistics
-    mat.mob.array <- array(list(b.array, w.array, d.array, p.array))
-    mclapply(mat.mob.array, game.stats.multiple, mc.cores=4)
-}
+    mat.mob.array <- array(list(g.array))  
+    lapply(mat.mob.array, game.stats.multiple)
+}   
 
-visualize.move.data <- function(move.data, num.games){
+visualize.move.data <- function(move.data, num.games, result){
     # plot histograms of data
     p.df      <- as.data.frame(move.data)
     num.moves <- ncol(p.df)
-    wht.moves <- round(num.moves/2)
+    wht.moves <- ceiling(num.moves/2)
     blk.moves <- num.moves - wht.moves
+    if (result=="black") outcome<-paste("Won by Black")
+    if (result=="white") outcome<-paste("Won by White")
+    if (result=="draw")  outcome<-paste("that Resulted in a Draw")
+    if (result=="all")   outcome<-paste("Randomly Selected")
+    
     hist(as.numeric(p.df[1,]),                               # black material
-         main=paste("Black Material in", num.games, "Master-Level Games"),
+         main=paste("Black Material in", num.games, "Master-Level Games",
+                    "\n", outcome),
          xlab=paste("Black Material Computed at each of", num.moves, "Moves"),
          col="blue")
          
     hist(as.numeric(p.df[2,]),                               # white material
-         main=paste("White Material in", num.games, "Master-Level Games"),
+         main=paste("White Material in", num.games, "Master-Level Games",
+                    "\n", outcome),
          xlab=paste("White Material Computed at each of", num.moves, "Moves"),
          col="light blue") 
     
     hist(as.numeric(p.df[3, c(FALSE, TRUE)]),                # black mobility
-         main=paste("Black Mobility in", num.games, "Master-Level Games"),
+         main=paste("Black Mobility in", num.games, "Master-Level Games",
+                    "\n", outcome),
          xlab=paste("Black Mobility Computed for", blk.moves, "Black Moves"),
          col="dark green") 
     
     hist(as.numeric(p.df[3, c(TRUE, FALSE)]),                # white mobility
-         main=paste("White Mobility in", num.games, "Master-Level Games"),
+         main=paste("White Mobility in", num.games, "Master-Level Games",
+                    "\n", outcome),
          xlab=paste("White Mobility Computed for", wht.moves, " White Moves"),
          col="green")
 }
 
-# ============================== Set Misc Params ===============================
+analyze.chess.games <- function(allgames, num.games, result="all"){
+    # this is the top-level function
+    # analyze num.games from allgames where result is:
+    # 'black', 'white', 'draw', or 'all' games regardless of outcome
+    
+    if (result=="black") games <- allgames[allgames$result == "0-1",     "pgn"]
+    if (result=="white") games <- allgames[allgames$result == "1-0",     "pgn"]
+    if (result=="draw")  games <- allgames[allgames$result == "1/2-1/2", "pgn"]
+    if (result=="all")   games <- allgames[, "pgn"]
+    
+    if (num.games>nrow(games)) 
+        return(print("Error: Sample size exceeds available games"))
+    
+    set.seed(42) # make this reproducible
+    indices <- sample(nrow(games), num.games)
+    get.mat.mob.parallel(as.data.frame(games[indices, ]), 
+                         result, num.games, detectCores())
+}
 
-piece.values     <- data.frame(Piece=c("p", "n", "b", "r", "q"),
-                               Value=c(1, 3, 3, 5, 9))
-set.seed(42)
-sampleSize       <- 2000    # number of games to analyze from dfgames
-indices          <- sample(nrow(dfgames), sampleSize)
-# indices <- 1:1000
-moves.results.df <- as.data.frame(dfgames[indices, c("pgn", "result")])
-mem_change(rm(list = ("dfgames"))) # reclaims about 1G of memory for 1000 games
+# ============================== Set Control Params ============================
+
+piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"),
+                           Value=c(1, 3, 3, 5, 9))
+sample.size  <- 2000      # number of games to analyze from dfgames
+
+result       <- "all"   # black, white, draw or all
 
 # ============================= Analyze Chess Games ============================
 
-system.time(mat.mob <- get.mat.mob.parallel(moves.results.df))
+system.time(mat.mob <- analyze.chess.games(dfgames, sample.size, result=result))
 
-# This code takes roughly 6 mins/1000 games
-mat.mob[[1]] # stats for black wins
-mat.mob[[2]] # stats for white wins
-mat.mob[[3]] # stats for draws
-mat.mob[[4]] # stats for all games
+mat.mob[[1]]
 
