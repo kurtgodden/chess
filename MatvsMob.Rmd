@@ -1,0 +1,550 @@
+---
+title: "Chess Material vs. Mobility: a Statistical Analysis in R"
+author: "Kurt Godden, Ph.D."
+date: "December 17, 2015"
+output: html_document
+---
+
+### 1. Introduction   
+
+For some time I have been interested in questions regarding the relative importance of material vs. mobility in deciding the outcomes of chess games.  Specifically, I want to know the answer to this question:  __Which is a more important factor in determining the winner of a chess game - material or mobility?__
+
+Given the obvious importance in the literature of strategy and positional play I have long suspected that mobility, i.e. the average number of moves of either player in a game, is likely more important in determining a game's result than material, or the point value of the pieces excepting the King, whose Majesty exceeds finite value.  
+
+Thus, when I recently discovered the existence of a chess package for R, a language I began to learn over a year ago, I determined to answer this question by analytical means.  
+
+The rchess package is available on CRAN or <https://github.com/jbkunst/rchess> and is described by its author, Joshua Kunst, at <http://jkunst.com/r/rchess-a-chess-package-for-r/> and <http://rpubs.com/jbkunst/rchess2>.  
+
+This document describes my initial foray into analyzing both material and mobility for expert-level white and black players (ELO >= 2000) using game data  available for download at <http://www.kingbase-chess.net>. I downloaded 1,696,727 games from that site on November 16, 2015 and preprocessed it using J. Kunst's *01_pgn_parser.R* code to use in the following analysis.  That preprocessed code resides in file *chess-db.Rdata*.  
+
+The bulk of the code itself appears below in an Appendix, along with some sample outputs from a run with a small sample of games won by black. Other key portions of the code are contained in the discussion sections of this description.  
+
+The code is run by calling the top level function, *analyze.chess.games*, with five arguments: the database of games from which to select a random sample, an integer indicating the sample size, a string to indicate the type of games to analyze by result: 'black', 'white', 'draw' or 'all', the last representing a sample selected without regard to outcome, and a boolean parameter indicating whether we wish to perform a paired t-test to determine the relative advantage of the winner vs. the loser with respect to both material and mobility. The final argument, used when this boolean is TRUE, is a sequence that consists of the difference in both material and mobility (white - black) in the larger population of games, as computed in a prior run on a random sample using *result = "all"*.
+
+### 2. Analysis and Initial Statistics
+
+My first goal was to discover if the winner of a game had a significantly higher mean value of either material or mobility compared to the expected mean of the population.  Thus, the first statistics needed were the population mean values of material and mobility for both white and black, regardless of outcome.  
+
+In a given game, both black and white material was computed for every board position.  Thus, in the initial position the point value of the pieces is 39 for each player.  Then after each move by either player, again the material values for both players were computed from the resulting position.  This continued until the final computation in the game's final position, resulting in a vector of material values for each player. The mean of each vector is the material mean for that game, one value for each player.  
+
+For mobility, the number of legal moves was computed at each turn, thus alternating between white and black, each player beginning with 20 legal moves. Again a vector of legal moves results for each player and the mean of each vector gives us the mean mobility of that player for the game.  
+
+In this manner, we compute the mean material and mobility for each of the games analyzed in a given sample of games, take the mean of each game mean and this gives us a sample mean for each statistic for each player.  Those sample means are point estimates for the four population means: black material, white material, black mobility and white mobility.
+
+In my first implementation of the code, computing these four mean values for only 1000 games took approximately 21 minutes, and the math indicated that it would take 24.7 days of continuous computation to arrive at the true means for the entire database of nearly 1.7 million games.  This expected time was reduced to 5.2 minutes per thousand games, or 6.1 days for the population with the introduction of the *parallel* package and partitioning the data to use all 8 CPU cores available on my 2.3 GHz Intel Core i7 in my MacBook Pro.
+
+I intended to perform that 6-day run until I did a trial with a random sample of 5000 games, and discovered that this subset took almost 3.25 hours to run, rather than the expected 26 minutes!  The fly in the hardware soup was main memory, of which I have 10GB, but the code very quickly consumed 9.5 of those 10, even when freeing up almost 1GB used for the games database after selecting the 5000 games to analyze.  I investigated the resource requirements of the code using Hadley Wickham's *lineprof* package, which can be installed in R by executing the line of code: *devtools::install_github("hadley/lineprof")*.  But in doing so, I discovered that the vast majority of time and memory was being consumed by the code in the *rchess* package, rather than my own code.  
+
+Thus, I realized I needed to simply *estimate* the population statistics based on the 5000 games used in that trial run.  Those point estimates are shown in __Table 1: Population Statistics__:
+
+Statistic | White Material | Black Material | White Mobility | Black Mobility  
+--------- | -------------- | -------------- | -------------- | --------------  
+Mean      | 29.574640      | 29.553987      | 33.13604       | 30.839317  
+St. Dev.  |  5.650526      |  5.680532      |  4.86725       |  4.354868  
+
+These population estimates are already interesting.  While white enjoys a tiny advantage in material that may or may not be significant, white's advantage in mobility looks impressive.  Indeed, in this sample of 5000 games white triumphed in 1821 games to black's 1388. (There were 1790 draws in this sample, and one game in the sample of 5000 had a result of '*', which basically means that the result was indeterminate at the time the game data was collected.)
+
+Next, I ran similar analyses of 1000 random games won by **black** and a separate 1000 games won by **white**.  The results for black wins are presented in __Table 2: Statistics when Black Wins__: 
+
+Statistic | White Material | Black Material | White Mobility | Black Mobility  
+--------- | -------------- | -------------- | -------------- | --------------  
+Mean      | 28.663276      | 29.038162      | 31.747328       | 32.336095  
+St. Dev.  |  5.214587      |  5.073105      |  4.688989       |  4.410876  
+
+
+The results for white wins are in __Table 3: Statistics when White Wins__
+
+Statistic | White Material | Black Material | White Mobility | Black Mobility  
+--------- | -------------- | -------------- | -------------- | --------------  
+Mean      | 29.45825       | 29.142364      | 34.362652       | 29.786741  
+St. Dev.  |  5.34346       |  5.487446      |  4.900061       |  4.323617  
+
+  
+And for completeness the statistics for 1000 randomly selected draws are in __Table 4: Statistics for Draws__
+
+Statistic | White Material | Black Material | White Mobility | Black Mobility  
+--------- | -------------- | -------------- | -------------- | --------------  
+Mean      | 29.902903      | 29.907774      | 32.494551      | 30.468773  
+St. Dev.  |  6.500493      |  6.511622      |  4.805943      |  4.277875  
+
+
+When either side wins, that player's mobility increases from its population estimate and the opponent's mobility decreases from the population. This much is not surprising, nor is the fact that when black wins, black's mobility is greater than white's, even though white enjoys a substantial mobility advantage in the population.  The same is true regarding material.  When either side wins, that side has slightly greater material than the losing side.
+
+But what *is* surprising is that when either side wins, **both** sides' material is slightly less than the corresponding estimates in the population.  This is necessarily counter-balanced by the statistics shown in Table 4 where material is higher for both sides in drawn games.  One might surmise that when a player wins, then that side's material would be higher than in the population as a whole, but that is not what the data indicate.  
+
+### 3. Hypothesis Tests of Mean Mobility and Material
+
+We have not yet checked for statistical significance among these point estimates, so let us now do so by testing for the significance of each of the means in the samples vs. their corresponding population means.  In each case, our null hypothesis H~0~ will be that the sample mean equals the population mean, and the alternative hypothesis H~a~ will be that it differs (either higher or lower).  
+
+For example, we see in our sample from black wins that black's mean mobility is 32.336095, whereas black's estimated mean mobility in the entire game population is 30.839317.  They are certainly different. However, due to the inherent variance of point estimates it might be the case that they are not sufficiently different to claim that the true mean of black mobility in the sub-population of all black wins is different from the true mean of black mobility in the whole population.  
+
+Let us use the notation *B.mob~b~* to refer to black's true mobility in the sub-population of black wins, *B.mob~sb~* to refer to the estimate of that true mobility that was calculated from a random sample taken from the sub-population of black wins.  Similarly, *B.mob~p~* refers to black's true mobility in the overall population of all games, and *B.mob~sp~* refers to our estimate of black's true mobility that we derived from a subset from the overall population without regard to the outcome.  
+
+Thus, the null hypothesis that is assumed to be true (until proven false beyond a reasonable doubt) is:  
+
+__H~0~: B.mob~b~ = B.mob~p~__  
+
+and the alternative hypothesis (that is to be believed only in face of overwhelming evidence that H~0~ is false) is:
+
+__H~a~: B.mob~b~ > B.mob~p~__  
+
+Here we use the '>' inequality since that possibility is suggested by the fact that __B.mob~sb~ > B.mob~sp~__.  
+
+The standard hypothesis test here is called Welch's t-test, <https://en.wikipedia.org/wiki/Welch%27s_t_test>, where we have two different sample sizes (the population sample of 5000 games and the 'winning' subset sample of 1000 games) with differing variance in each sample. The first step in performing the t-test is to obtain the t-statistic, which is the number of standard errors separating the sample mean from the population mean.  We also need to calculate the degrees of freedom, a parameter needed for t-tests:  
+
+```{r}
+t.stat.Welch <- function(s1.mean, s2.mean, s1.sd, s2.sd, n1, n2){
+    # return t-statistic for Welch's t-test
+    # s1.mean is mean of sample 1
+    # s1.sd   is std dev of sample 1
+    # n1      is sample size of sample 1
+    # Similarly for sample 2
+    mean.diff   <- s1.mean - s2.mean
+    stdErr.diff <- sqrt(s1.sd^2/n1 + s2.sd^2/n2)
+    mean.diff/stdErr.diff
+}
+
+deg.freedom <- function(s1.sd, s2.sd, n1, n2){
+    # return degrees of freedom for Welch t-test using
+    # Welch–Satterthwaite equation. 
+    # s1.sd   is std dev of sample 1
+    # n1      is sample size of sample 1
+    # Similarly for sample 2
+    s1.var.ratio <- s1.sd^2/n1
+    s2.var.ratio <- s2.sd^2/n2
+    numer        <- (s1.var.ratio + s2.var.ratio)^2
+    denom        <- (s1.var.ratio^2 / (n1-1) + s2.var.ratio^2 / (n2-1))
+    numer/denom
+}
+
+```
+The standard calculation for such a hypothesis test is to compute the difference  __B.mob~b~ - B.mob~p~__, divide that difference by the standard error, then compare that statistic to a t-quantile that controls the Type 1 error, which is the probability of rejecting H~0~ when it is actually true. And, as is also common practice, since we do not know the true population mean or standard deviation, we use point estimates, in this case from the 5000 game population sample.  
+```{r}
+samp.siz.b <- 1000      # num games where black wins
+samp.siz.p <- 5000      # num games to compute population stats
+B.mob_b    <- 32.336095 # black mean mobility in black wins
+B.mob_p    <- 30.839317 # black mean mobility in population
+sd.b       <- 4.410876  # st dev of black mobility in black wins
+sd.p       <- 4.354868  # st dev of black mobility in population
+df         <- deg.freedom(sd.b, sd.p, samp.siz.b, samp.siz.p) # degrees of freedom
+t.value    <- t.stat.Welch(B.mob_b, B.mob_p, sd.b, sd.p, samp.siz.b, samp.siz.p)
+t.value           # num of standard errors between the two means
+t.quant    <- qt(0.95, df) 
+t.quant           # the value we need to exceed if H_0 is to be rejected
+t.value > t.quant # if TRUE, we reject the null hypothesis
+t.value/t.quant   # t.value in quantiles
+```
+We can see that black's mean mobility when black wins is nearly 10 standard errors greater than the estimated mean of the population.  The common standard for statistical significance limits the probability of rejecting the null hypothesis when it is true to 5%. Since our t-value is almost 6 times greater than the quantile needed for significance, the result of our test is mind-bogglingly significant and we reject the null hypothesis in favor of H~a~ that when black wins, black's mobility is larger than it is in the overall population.  This does not guarantee the truth of H~a~, just that H~0~ is extremely unlikely to be true.  
+
+Now let us perform the same test for mobility when white wins:  
+
+__H~0~: W.mob~w~ = W.mob~p~__  
+__H~a~: W.mob~w~ > W.mob~p~__  
+```{r}
+samp.siz.w <- 1000      # num games where white wins
+samp.siz.p <- 5000      # num games to compute population stats
+W.mob_w    <- 34.362652 # white mean mobility in white wins
+W.mob_p    <- 33.13604  # white mean mobility in population
+sd.w       <- 4.900061  # st dev of white mobility in white wins
+sd.p       <- 4.86725   # st dev of white mobility in population
+df         <- deg.freedom(sd.w, sd.p, samp.siz.w, samp.siz.p) # degrees of freedom
+t.value    <- t.stat.Welch(W.mob_w, W.mob_p, sd.w, sd.p, samp.siz.w, samp.siz.p)
+t.value           # num of standard errors between the two means
+t.quant    <- qt(0.95, df) 
+t.quant           # the value we need to exceed if H_0 is to be rejected
+t.value > t.quant # if TRUE, we reject the null hypothesis
+t.value/t.quant   # t.value in quantiles
+```
+Again the result is extremely significant, with more than 7 standard errors separating the sample mean mobility in white wins from the population mean mobility, which is more than 4 times the difference needed to reject H~0~.  Thus, we again reject the null hypothesis in favor of H~a~.  
+
+Since we are having so much fun, let us now do the same tests for black and white material means:  
+__H~0~: B.mat~b~ = B.mat~p~__  
+__H~a~: B.mat~b~ < B.mat~p~__  
+
+Notice that since we see in the computation tables above that B.mat~b~ < B.mat~p~, we now use '<' as our inequality.  And to make the discussion congruent with the previous discussion we will take the absolute value of the t-value so we can again reject H~0~ if that t-value exceeds the t-quantile.  
+
+```{r}
+samp.siz.b <- 1000      # num games where black wins
+samp.siz.p <- 5000      # num games to compute population stats
+B.mat_b    <- 29.038162 # black mean maerial in black wins
+B.mat_p    <- 29.553987 # black mean material in population
+sd.b       <- 5.073105  # st dev of black material in black wins
+sd.p       <- 5.680532  # st dev of black material in population
+df         <- deg.freedom(sd.b, sd.p, samp.siz.b, samp.siz.p) # degrees of freedom
+t.value    <- abs(t.stat.Welch(B.mat_b, B.mat_p, sd.b, sd.p, samp.siz.b, samp.siz.p))
+t.value           # num of standard errors between the two means
+t.quant    <- qt(0.95, df) 
+t.quant           # the value we need to exceed if H_0 is to be rejected
+t.value > t.quant # if TRUE, we reject the null hypothesis
+t.value/t.quant   # t.value in quantiles
+```  
+
+Since the mean black material when black wins is nearly 3 standard errors smaller than black's estimated population mean material (remember that we first took the absolute value), which is more than 1.7 times the difference needed to reject the null hypothesis, once again we reject H~0~ in favor of H~a~.  Let's see what happens with white:  
+
+__H~0~: W.mat~w~ = W.mat~p~__  
+__H~a~: W.mat~w~ > W.mat~p~__  
+```{r}
+samp.siz.w <- 1000      # num games where white wins
+samp.siz.p <- 5000      # num games to compute population stats
+W.mat_w    <- 29.45825  # white mean material in white wins
+W.mat_p    <- 29.574640 # white mean material in population
+sd.w       <-  5.34346  # st dev of white material in white wins
+sd.p       <-  5.650526 # st dev of white material in population
+df         <- deg.freedom(sd.w, sd.p, samp.siz.w, samp.siz.p) # degrees of freedom
+t.value    <- abs(t.stat.Welch(W.mat_w, W.mat_p, sd.w, sd.p, samp.siz.w, samp.siz.p))
+t.value           # num of standard errors between the two means
+t.quant    <- qt(0.95, df) 
+t.quant           # the value we need to exceed if H_0 is to be rejected
+t.value > t.quant # if TRUE, we reject the null hypothesis
+t.value/t.quant   # t.value in quantiles
+
+```
+
+This result is different in kind from the previous three hypothesis tests.  Since the difference in mean material when white wins vs. white's mean material in the overall population is much *less* than the t-quantile of 1.645883 standard errors, we do not have sufficient evidence to reject H~0~ and we continue to assume that the material mean for white when white wins is the same as the material mean for white in the overall population.
+
+### 4. Hypothesis Tests of Black vs. White Advantages  
+
+As we noted previously, when one side wins, Tables 2 and 3 above suggest that the winning side has an advantage in both material and mobility.  However, we need to verify if that advantage is statistically significant or not.  To determine this, we perform a paired t-test: <https://en.wikipedia.org/wiki/Paired_difference_test>, using this code:  
+```{r}
+paired.t.test <- function(game.result, stats.matrix, matmob.diffs.pop) {  
+    # game.result is "black", "white", "draw", or "all"
+    # but no test is done for "draw" or "all"
+    # Each column of stats.matrix is a game
+    # row 1 is mean white material for each game
+    # row 2 is mean black material "
+    # row 3 is mean white mobility "
+    # row 4 is mean black mobility "
+    # matmob.diffs.pop is sequence of values for mu from the difference
+    # (white - black) of the previously computed point estimates of
+    # mean material and mobility in the population 
+    mat.diff.pop <- matmob.diffs.pop[1]
+    mob.diff.pop <- matmob.diffs.pop[2]
+    if (game.result=="white"){
+        print("paired t-test of white - black material")
+        print(t.test(stats.matrix[1,], stats.matrix[2, ], 
+                     alternative="greater", paired=TRUE, mu = mat.diff.pop))
+        
+        print("paired t-test of white - black mobility")
+        print(t.test(stats.matrix[3,], stats.matrix[4, ], 
+                     alternative="greater", paired=TRUE, mu = mob.diff.pop))
+    }
+    if (game.result=="black"){
+        print("paired t-test of black - white material")
+        print(t.test(stats.matrix[2,], stats.matrix[1, ], 
+                     alternative="greater", paired=TRUE, mu = -mat.diff.pop))
+        
+        print("paired t-test of black - white mobility")
+        print(t.test(stats.matrix[4,], stats.matrix[3, ], 
+                     alternative="greater", paired=TRUE, mu = -mob.diff.pop))
+    }
+}    
+
+```
+Recall that in the population, we previously computed these estimates for mean black and white material and mobility:
+
+Statistic | White Material | Black Material | White Mobility | Black Mobility  
+--------- | -------------- | -------------- | -------------- | --------------  
+Mean      | 29.574640      | 29.553987      | 33.13604       | 30.839317  
+
+Thus, when ignoring game outcomes we expect white to have an advantage in material of 0.020653 (= 29.574640 - 29.553987) and an advantage in mobility of 2.296723 (= 33.13604 - 30.839317).  If we then take a random sample of games where either black or white wins, if white turns out to have an advantage that is greater than those values, we can perform a paired t-test to determine of that difference is significant or not.  Similarly, if our sample is from games where black is the winner, then if the difference of black's statistics from white's are greater than -0.020653 or -2.296723, for material and mobility respectively, then the paired t-test can also tell us if those differences are significant or not.  
+
+When we performed those tests on random samples of 100 games for each type of win, we obtain the following results, shown in Tables 5 through 8:  
+
+__Table 5: Paired t-test for Black Material Advantage in Black Wins:__
+
+t-value | Deg. of Freedom | p-value   | Mean Difference | 0.95 Confidence Interval  
+------- | --------------- | --------- | --------------- | ------------------------  
+6.9296  | 99              | 2.165e-10 | 0.4174999       | [0.3125142, Inf]  
+
+__Table 6: Paired t-test for Black Mobility Advantage in Black Wins:__
+
+t-value | Deg. of Freedom | p-value   | Mean Difference | 0.95 Confidence Interval  
+------- | --------------- | --------- | --------------- | ------------------------  
+5.8942  | 99              | 2.612e-08 | 0.5405735       | [-0.2586931, Inf]  
+
+__Table 7: Paired t-test for White Material Advantage in White Wins:__
+
+t-value | Deg. of Freedom | p-value   | Mean Difference | 0.95 Confidence Interval  
+------- | --------------- | --------- | --------------- | ------------------------  
+5.01    | 99              | 1.19e-06  | 0.327077        | [0.2255239, Inf]  
+
+__Table 8: Paired t-test for White Mobility Advantage in White Wins:__
+
+t-value | Deg. of Freedom | p-value   | Mean Difference | 0.95 Confidence Interval  
+------- | --------------- | --------- | --------------- | ------------------------  
+5.159   | 99              | 6.391e-07 | 0.5405735       | [4.021493, Inf]  
+
+Now we have some data to address the original question asked above in the Introducion regarding the relative importance of material vs. mobility.   
+
+ The key number in each table is the p-value.  If the p-value is less than 0.05 then the test involved is significant at the 95% level; if less than 0.01 then the significance is at the 99% level, and so on.  In all four of these t-tests, our p-levels are dramatically less than 0.01, and far more significant than even 99%.  
+ 
+Thus, in all cases the winner has a statistically significant advantage in *both* material and mobility, but can we tell which one is the **most** important?  Remember that smaller p-values indicate a greater level of significance.  
+
+For black, the p-value for material is about 2 orders of magnitude smaller than the p-value for mobility; hence, material is more significant than mobility, at least in a statistical sense.  However for white, the p-value of mobility is about 1 order of magnitude smaller, indicating that mobility is statistically more significant, exactly the opposite of black!  
+
+### 5. Conclusions
+
+These results, while both interesting and surprising, are certainly not definitive.  The tests above were performed drawing samples from only one dataset of expert games.  Also, I have my doubts that the same results will hold for non-expert games, and I am hoping to obtain a large database of such game data to do a comparison.  
+
+Further, the results presented here should be confirmed by others performing their own independent analyses. For this reason I am making my code freely available on Github, not only so others can perform their own tests, but also so others can discover if I have made errors in either my code or my analysis.  If so, I welcome the feedback so these errors can be corrected and the tests rerun.  [Note: I have not yet put this code on Github, but will update this document with a link when I do.]
+
+However, if my analysis was done correctly, then the test data in Tables 5-8 leads to a fascinating answer to our question, _"Which is a more important factor in determining the winner of a chess game - material or mobility?"_  The answer seems to be, __It depends whether you are black or white!!__  
+
+### Appendix: The Remaining R Analysis Code   
+
+```{r}
+library(rchess)   # R package implementing interface to chess code
+library(stringr)  # rchess wants this
+library(parallel) # allows huge decrease in processing time
+setwd("~/Documents/R/Chess/MaterialVsMobility")
+load("chess-db.RData") # sets 'dfgames' to 1,696,727 observations of 11 vars
+                       # 468441      black wins
+                       # 620745      white wins
+                       # 607422      draws
+str(dfgames)           # show structure of the games database
+```   
+
+Next, we define the functions needed to compute the material and mobility statistics for a given random sample of games:
+```{r}
+material <- function(board, piece.values) {
+    # return the material of white & black for current position
+    pn.val <- piece.values[piece.values$Piece=="p", 2]
+    kt.val <- piece.values[piece.values$Piece=="n", 2]
+    bp.val <- piece.values[piece.values$Piece=="b", 2]
+    rk.val <- piece.values[piece.values$Piece=="r", 2]
+    qn.val <- piece.values[piece.values$Piece=="q", 2]
+    # parse fen and compute white/black material
+    fen          <- board$fen()
+    endRankData  <- regexec(" ", fen)[[1]][1] - 1
+    pieces       <- substr(fen, 1, endRankData) 
+    white.values <- (pn.val * str_count(pieces, "P") + 
+                     kt.val * str_count(pieces, "N") +
+                     bp.val * str_count(pieces, "B") +
+                     rk.val * str_count(pieces, "R") +
+                     qn.val * str_count(pieces, "Q"))
+    black.values <- (pn.val * str_count(pieces, "p") + 
+                     kt.val * str_count(pieces, "n") +
+                     bp.val * str_count(pieces, "b") +
+                     rk.val * str_count(pieces, "r") +
+                     qn.val * str_count(pieces, "q"))
+    c(white.values, black.values)
+}
+
+mobility <- function(board){
+    # returns number of legal moves at current position
+    length(board$moves())
+}
+
+material.mobility.game.matrix <- function(pgn) {
+    # return matrix of material (row 1, white; row 2, black) and mobility (row 3)
+    # before every move in game plus mat/mob of final position
+    # In row 3, mobility, the odd numbered columns refer to white's mobility
+    # Columns correspond to each half-move of the game
+    board   <- Chess$new()
+    board$load_pgn(pgn)
+    all.san <- board$history()  # pgn as vector without move nums
+    board   <- Chess$new()      # reset board to step thru moves
+    
+    mat.mob.matrix <- apply(as.matrix(all.san), 1, 
+                            function(san){
+                                #return position's material/mobility, then make next move
+                                mat <- material(board, piece.values) # material of w & b
+                                mob <- mobility(board)               # num legal moves on board
+                                board$move(san)                      # make move taken by player
+                                c(mat, mob)
+                            })
+    mat            <- material(board, piece.values) # material at end position
+    mob            <- mobility(board)               # mobility at end position
+    cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob including end position 
+}
+
+mat.mob.by.result <- function(pgns){  
+    # return array of stats PER MOVE of every game
+    # pgns is a vector of pgn strings, i.e. games
+    if (length(pgns)>1) {
+        game.array  <- apply(as.matrix(pgns), 1, material.mobility.game.matrix)
+    }
+    else { #there is only one game in the group
+        game.matrix <- list(material.mobility.game.matrix(pgns))
+    }
+}
+
+game.stats.multiple <- function(game.array, game.result, 
+                                do.t, matmob.diffs.pop){
+    # return mean material and mobility from mutliple games
+    # vapply is faster than sapply and also provides names
+    # if do.t is TRUE, we perform paired t.test of white vs. black stats
+    # matmob.diffs.pop is sequence of differences in material and mobility
+    # (white - black) from the estimates in the population
+    
+    stats.matrix <- vapply(game.array, game.stats.single,
+                           c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0)) 
+    # each column of matrix is a game
+    # row 1 is mean white material for each game
+    # rwo 2 is mean black material
+    # row 3 is mean white mobility
+    # row 4 is mean black mobility
+    
+    if (do.t==TRUE) paired.t.test(game.result, stats.matrix, matmob.diffs.pop)
+    
+    stats.mean <- rowMeans(stats.matrix) # faster than apply/mean
+    stats.stdv <- apply(stats.matrix, 1, sd)
+    rbind(stats.mean, stats.stdv) #return mean and std dev for w/b material and mobility
+}
+
+game.stats.single <- function(game.matrix){
+    # return mean material and mobility from single game
+    w.mat <- mean(game.matrix[1,])                # mean white material in this game
+    b.mat <- mean(game.matrix[2,])                # mean black material
+    w.mob <- mean(game.matrix[3, c(TRUE, FALSE)]) # mean white mobility
+    b.mob <- mean(game.matrix[3, c(FALSE, TRUE)]) # mean black mobility
+    c(w.mat, b.mat, w.mob, b.mob)
+}
+
+get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
+                                 num.games, num.cores) {
+    # game.result is a text string indicating the outcome of the games
+    # being analyzed: black, white, draw, or all
+    # do.t is boolean and controls whether paired t.test is performed
+    # matmob.diffs.pop contains sequence of differences between
+    # material and mobility (white minus black) in the population.
+    # num.games is the number of games being analyzed (==nrow(df))
+    # num.cores is the number of cores we can use for parallel processing
+    # (currently 8 cores)
+    # This parallel version takes 25% the time of non-parallel version!
+    games.per.core <-  floor(num.games/num.cores)
+    g1.first       <- 1
+    g1.last        <- games.per.core
+    g2.first       <- g1.last + 1
+    g2.last        <- 2 * games.per.core
+    g3.first       <- g2.last + 1
+    g3.last        <- 3 * games.per.core
+    g4.first       <- g3.last + 1
+    g4.last        <- 4 * games.per.core
+    g5.first       <- g4.last + 1
+    g5.last        <- 5 * games.per.core
+    g6.first       <- g5.last + 1
+    g6.last        <- 6 * games.per.core
+    g7.first       <- g6.last + 1
+    g7.last        <- 7 * games.per.core
+    g8.first       <- g7.last + 1
+    g8.last        <- num.games
+    
+    # split df into 8 subsets to process one per core
+    g1 <- df[g1.first:g1.last, ]
+    g2 <- df[g2.first:g2.last, ] 
+    g3 <- df[g3.first:g3.last, ] 
+    g4 <- df[g4.first:g4.last, ] 
+    g5 <- df[g5.first:g5.last, ] 
+    g6 <- df[g6.first:g6.last, ] 
+    g7 <- df[g7.first:g7.last, ] 
+    g8 <- df[g8.first:g8.last, ] 
+    
+    mat.mob.array <- mclapply(list(g1, g2, g3, g4, g5, g6, g7, g8), 
+                              mat.mob.by.result, 
+                              mc.cores = num.cores)     
+    # recombine results into single array
+    g.array <- append(append(append(append(append(append(append(mat.mob.array[[1]], 
+                                                                mat.mob.array[[2]]),
+                                                         mat.mob.array[[3]]),
+                                                  mat.mob.array[[4]]),
+                                           mat.mob.array[[5]]),
+                                    mat.mob.array[[6]]),
+                             mat.mob.array[[7]]),
+                      mat.mob.array[[8]])  
+    # plot histograms using stats from every move of every game
+    visualize.move.data(g.array, num.games, game.result) 
+    
+    # get final statistics
+    mat.mob.array <- array(list(g.array))  
+    lapply(mat.mob.array, game.stats.multiple, game.result, 
+           do.t, matmob.diffs.pop)
+}   
+
+visualize.move.data <- function(move.data, num.games, result){
+    # plot histograms of data
+    p.df      <- as.data.frame(move.data)
+    num.moves <- ncol(p.df)
+    wht.moves <- ceiling(num.moves/2)
+    blk.moves <- num.moves - wht.moves
+    if (result=="black") outcome<-paste("Won by Black")
+    if (result=="white") outcome<-paste("Won by White")
+    if (result=="draw")  outcome<-paste("that Resulted in a Draw")
+    if (result=="all")   outcome<-paste("Randomly Selected")
+    
+    hist(as.numeric(p.df[1,]),                               # black material
+         main=paste("Black Material in", num.games, "Expert-Level Games",
+                    "\n", outcome),
+         xlab=paste("Black Material Computed at each of", num.moves, "Moves"),
+         col="blue")
+         
+    hist(as.numeric(p.df[2,]),                               # white material
+         main=paste("White Material in", num.games, "Expert-Level Games",
+                    "\n", outcome),
+         xlab=paste("White Material Computed at each of", num.moves, "Moves"),
+         col="light blue") 
+    
+    hist(as.numeric(p.df[3, c(FALSE, TRUE)]),                # black mobility
+         main=paste("Black Mobility in", num.games, "Expert-Level Games",
+                    "\n", outcome),
+         xlab=paste("Black Mobility Computed for", blk.moves, "Black Moves"),
+         col="dark green") 
+    
+    hist(as.numeric(p.df[3, c(TRUE, FALSE)]),                # white mobility
+         main=paste("White Mobility in", num.games, "Expert-Level Games",
+                    "\n", outcome),
+         xlab=paste("White Mobility Computed for", wht.moves, " White Moves"),
+         col="green")
+}
+
+analyze.chess.games <- function(allgames, num.games, result="all", 
+                                do.t=TRUE, matmob.diffs.pop){
+    # this is the top-level function
+    # analyze num.games from global dfgames where result is:
+    # 'black', 'white', 'draw', or 'all' games regardless of outcome
+    # Perform paired t-test of black vs. white advantage if do.t is T,
+    # using the population differences in matmob.diffs.pop for mu
+    
+    if (result=="black") games <- allgames[allgames$result == "0-1",     "pgn"]
+    if (result=="white") games <- allgames[allgames$result == "1-0",     "pgn"]
+    if (result=="draw")  games <- allgames[allgames$result == "1/2-1/2", "pgn"]
+    if (result=="all")   games <- allgames[, "pgn"]
+    
+    if (num.games>nrow(games)) 
+        return(print("Error: Sample size exceeds available games"))
+    
+    set.seed(42) # make this code reproducible
+    indices <- sample(nrow(games), num.games)
+    get.mat.mob.parallel(as.data.frame(games[indices, ]), 
+                         result, do.t, matmob.diffs.pop,
+                         num.games, detectCores()) # I have 8 cores
+}
+
+```   
+
+Before calling this code, we set up a few parameters to set the piece values we wish to use and the size of the random sample from the games database, filtered by the type of outcome we are intested in for that random sample, and whether or not we wish to perform a paired t-test of black vs. white advantage using the two population differences for material and mobility as targets against which to compare the t-values:    
+
+```{r}
+piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"), 
+                           Value=c( 1,   3,   3,   5,   9)) 
+                          # piece.values is passed when fn 'material' is called
+sample.size  <- 32        # number of games to analyze from dfgames
+
+result       <- "black"   # black, white, draw or all 
+
+do.t.test    <- TRUE      # perform t.test or not on black vs. white advantage
+
+mat.diff.pop <- 0.020653  # diff in white - black material in population
+
+mob.diff.pop <- 2.296723  # diff in white - black mobility in population
+
+```   
+
+As a simple example, we invoke the code above by calling the top-level function *analyze.chess.games* and passing it *dfgames* (created when the games database is read from disk), *sample.size*, *result* and the two other arguments, and then displaying the graphs and values of the computations.  The global variable *piece.values* is passed to the function 'material' when that function is called elsewhere in the code.  That parameter allows us to easily experiment with other piece valuations, e.g. equating bishops to 3.5 points.  In the following, we randomly select 16 games from a subset of the database consisting only of games won by black.  The results of the analysis, including the paired t-test for black's material and mobility advantages, are shown below, preceded by some histograms.  Even in this tiny random sample, the p-values for black's material and mobility advantages are significant.
+
+```{r}
+mat.mob <- analyze.chess.games(dfgames,   sample.size, result, 
+                               do.t.test, c(mat.diff.pop, mob.diff.pop))
+mat.mob[[1]] # The statistics computed for this sample are:
+
+```   
