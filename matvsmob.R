@@ -17,10 +17,10 @@
 #   pgn parser/converter at:
 #   https://github.com/jbkunst/chess-db 
 #
-# I downloaded 1,696,727 master level games (ELO>2000) from:
+# I downloaded 1,696,727 master level games (ELO>=2000) from:
 # http://www.kingbase-chess.net on 11/16/2015
 # I preprocessed and saved that data into .RData format using Joshua Kunst's
-# 01_pgn_parser.R code. That data resides in file chess-db.RData
+# 01_pgn_parser.R code. That preprocessed data resides in file chess-db.RData
 #
 # Here are the stats of 5000 randomly-selected games: (193 mins to compute)
 #            w.mat     b.mat     w.mob     b.mob
@@ -250,12 +250,13 @@ mat.mob.by.result <- function(pgns){
 # }
 
 game.stats.multiple <- function(game.array, game.result, 
-                                do.t, matmob.diffs.pop){
+                                do.t, matmob.diffs.pop, write.data.to.file){
     # return mean material and mobility from multiple games
     # vapply is faster than sapply and also provides names
     # if do.t is TRUE, we perform paired t.test of white vs. black stats
     # matmob.diffs.pop is sequence of differences in material and mobility 
     # (white - black) from the estimates in the population
+    # write.data.to.file controls whether we write our data to a file or not
     
     stats.matrix <- vapply(game.array, game.stats.single,
                            c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0, "mates"=0)) 
@@ -270,17 +271,26 @@ game.stats.multiple <- function(game.array, game.result,
     
 ######## I need to understand the following better before I write about it################
     stats.df <- as.data.frame(t(stats.matrix))
-#    print(stats.df)
-    lm.white.fit <- lm(w.mat ~ w.mob, data=stats.df)
-    lm.black.fit <- lm(b.mat ~ b.mob, data=stats.df)
     
-    plot(stats.df$w.mob, stats.df$w.mat)
-    abline(lm.white.fit)
+    if (write.data.to.file) {
+        fname <- paste("stats", sample.size, "games", "result", result, "csv", sep=".")
+        write.csv(stats.df, file=fname)
+        }
+    
+    lm.white.fit <- lm(w.mob ~ w.mat, data=stats.df)
+    lm.black.fit <- lm(b.mob ~ b.mat, data=stats.df)
+    
+    plot(stats.df$w.mat, stats.df$w.mob, 
+         xlab= "White Material", ylab="White Mobility", pch=20,
+         main=paste("Linear Fit from", sample.size, "Games with Result:", result))  
+    abline(lm.white.fit, col="red")
     plot(lm.white.fit)
     print(summary(lm.white.fit))
     
-    plot(stats.df$b.mob, stats.df$b.mat)
-    abline(lm.black.fit)
+    plot(stats.df$b.mat, stats.df$b.mob,
+         xlab= "Black Material", ylab="Black Mobility", pch=20,
+         main=paste("Linear Fit from", sample.size, "Games with Result:", result)) 
+    abline(lm.black.fit, col="red")
     plot(lm.black.fit)
     print(summary(lm.black.fit)) 
 ##########################################################################################
@@ -301,7 +311,7 @@ game.stats.multiple <- function(game.array, game.result,
 
 game.stats.single <- function(game.matrix){
     # return mean material and mobility from single game
-    # along with an indicator if game ended in checkmat
+    # along with an indicator if game ended in checkmate
     w.mat <- mean(game.matrix[1,])                # mean white material in this game
     b.mat <- mean(game.matrix[2,])                # mean black material
     
@@ -323,7 +333,7 @@ game.stats.single <- function(game.matrix){
 # system.time(mat.mob <- get.mat.mob(moves.results.df)) 
 
 get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
-                                 num.games, num.cores) { 
+                                 num.games, num.cores, write.data.to.file) { 
     # df is a data frame of games with only one variable: pgn
     # game.result is a text string indicating the outcome of the games
     # being analyzed: black, white, draw, or all
@@ -334,6 +344,7 @@ get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
     # num.cores is the number of cores we can use for parallel processing
     # (currently 8 cores)
     # This parallel version takes 25% the time of non-parallel version!
+    # write.data.to.file is boolean and controls whether we write our mat/mob data
     games.per.core <-  floor(num.games/num.cores)
     g1.first       <- 1
     g1.last        <- games.per.core
@@ -380,7 +391,7 @@ get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
     # get final statistics
     mat.mob.array <- array(list(g.array))  
     lapply(mat.mob.array, game.stats.multiple, game.result, 
-           do.t, matmob.diffs.pop)
+           do.t, matmob.diffs.pop, write.data.to.file)
 }   
 
 visualize.move.data <- function(move.data, num.games, result){
@@ -440,7 +451,7 @@ data.overview <- function(games, num.games, result){
 }
 
 analyze.chess.games <- function(allgames, num.games, result="all", 
-                                do.t=TRUE, matmob.diffs.pop){
+                                do.t=TRUE, matmob.diffs.pop, write.data.to.file){
     # this is the top-level function
     # analyze num.games from global dfgames where result is:
     # 'black', 'white', 'draw', or 'all' games regardless of outcome
@@ -468,7 +479,7 @@ analyze.chess.games <- function(allgames, num.games, result="all",
     data.overview(games, num.games, result)    # summarize high-level stats of these games
     games   <- as.data.frame(games[ , "pgn"])  # keep only the pgn variable
     get.mat.mob.parallel(games, result, do.t, matmob.diffs.pop,
-                         num.games, detectCores()) # I have 8 cores
+                         num.games, detectCores(), write.data.to.file) # I have 8 cores
 }
 
 # ==============================  t-test functions  ===========================
@@ -551,23 +562,26 @@ paired.t.test <- function(game.result, stats.matrix, matmob.diffs.pop) {
 
 piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"), 
                            Value=c( 1,   3,   3,   5,   9))
-sample.size  <- 1000      # number of games to analyze from dfgames
+sample.size  <- 10      # number of games to analyze from dfgames
 
 result       <- "all"   # black, white, draw or all 
 
-do.t.test    <- TRUE     # perform t.test or not on white vs. black stats
+do.t.test    <- FALSE     # perform t.test or not on white vs. black stats
 
 mat.diff.pop <- 0.020653 # diff in white - black material in population
 
 mob.diff.pop <- 2.296723 # diff in white - black mobility in population
 
+save.data    <- TRUE     # write mat/mob to file or not
+
 # ============================= Analyze Chess Games ============================
 
-# system.time(mat.mob <- analyze.chess.games(dfgames, sample.size, 
-#                                            result, do.t.test,
-#                                            c(mat.diff.pop, mob.diff.pop)))
-mat.mob <- analyze.chess.games(dfgames,   sample.size, result, 
-                               do.t.test, c(mat.diff.pop, mob.diff.pop))
+system.time(mat.mob <- analyze.chess.games(dfgames,   sample.size, result, 
+                               do.t.test, c(mat.diff.pop, mob.diff.pop), save.data))
+
+# mat.mob <- analyze.chess.games(dfgames,   sample.size, result, do.t.test, 
+#                                c(mat.diff.pop, mob.diff.pop), save.data)
+
 
 mat.mob[[1]][1,5] <- mat.mob[[1]][1,5] * sample.size
 

@@ -286,7 +286,7 @@ For black, the p-value for material is about 2 orders of magnitude smaller than 
 
 These results, while both interesting and surprising, are certainly not definitive.  The tests above were performed drawing samples from only one dataset of expert games.  Also, I have my doubts that the same results will hold for non-expert games, and I am hoping to obtain a large database of such game data to do a comparison.  
 
-Further, the results presented here should be confirmed by others performing their own independent analyses. For this reason I am making my code freely available on Github, not only so others can perform their own tests, but also so others can discover if I have made errors in either my code or my analysis.  If so, I welcome the feedback so these errors can be corrected and the tests rerun.  [Note: I have not yet put this code on Github, but will update this document with a link when I do.]
+Further, the results presented here should be confirmed by others performing their own independent analyses. For this reason I am making my code freely available on Github, not only so others can perform their own tests, but also so others can discover if I have made errors in either my code or my analysis.  If so, I welcome the feedback so these errors can be corrected and the tests rerun.  The code repository can be found at <https://github.com/kurtgodden/chess.git>.
 
 However, if my analysis was done correctly, then the test data in Tables 5-8 leads to a fascinating answer to our question, _"Which is a more important factor in determining the winner of a chess game - material or mobility?"_  The answer seems to be, __It depends whether you are black or white!!__  
 
