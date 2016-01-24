@@ -226,37 +226,16 @@ mat.mob.by.result <- function(pgns){
     }
 }
 
-# game.stats.multiple <- function(game.array, game.result, 
-#                                 do.t, matmob.diffs.pop){
-#     # return mean material and mobility from multiple games
-#     # vapply is faster than sapply and also provides names
-#     # if do.t is TRUE, we perform paired t.test of white vs. black stats
-#     # matmob.diffs.pop is sequence of differences in material and mobility 
-#     # (white - black) from the estimates in the population
-#     
-#     stats.matrix <- vapply(game.array, game.stats.single,
-#                            c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0)) 
-#     # each column of matrix is a game
-#     # row 1 is mean white material for each game
-#     # row 2 is mean black material
-#     # row 3 is mean white mobility
-#     # row 4 is mean black mobility
-#     
-#     if (do.t==TRUE) paired.t.test(game.result, stats.matrix, matmob.diffs.pop)
-#     
-#     stats.mean <- rowMeans(stats.matrix) # faster than apply/mean
-#     stats.stdv <- apply(stats.matrix, 1, sd)
-#     rbind(stats.mean, stats.stdv) #return mean and std dev for w/b material and mobility
-# }
-
 game.stats.multiple <- function(game.array, game.result, 
-                                do.t, matmob.diffs.pop, write.data.to.file){
+                                do.t, matmob.diffs.pop, 
+                                write.data.to.file, linear.fits){
     # return mean material and mobility from multiple games
     # vapply is faster than sapply and also provides names
     # if do.t is TRUE, we perform paired t.test of white vs. black stats
     # matmob.diffs.pop is sequence of differences in material and mobility 
     # (white - black) from the estimates in the population
     # write.data.to.file controls whether we write our data to a file or not
+    # linear.fits controls if we do the lm() calls or not
     
     stats.matrix <- vapply(game.array, game.stats.single,
                            c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0, "mates"=0)) 
@@ -269,36 +248,75 @@ game.stats.multiple <- function(game.array, game.result,
     
     if (do.t==TRUE) paired.t.test(game.result, stats.matrix, matmob.diffs.pop)
     
-######## I need to understand the following better before I write about it################
-    stats.df <- as.data.frame(t(stats.matrix))
+    # Create data frame if we are going to write to a file or do lm()
+    if (write.data.to.file | linear.fits) stats.df <- as.data.frame(t(stats.matrix))
     
     if (write.data.to.file) {
         fname <- paste("stats", sample.size, "games", "result", result, "csv", sep=".")
         write.csv(stats.df, file=fname)
-        }
-    
-    lm.white.fit <- lm(w.mob ~ w.mat, data=stats.df)
-    lm.black.fit <- lm(b.mob ~ b.mat, data=stats.df)
-    
-    plot(stats.df$w.mat, stats.df$w.mob, 
-         xlab= "White Material", ylab="White Mobility", pch=20,
-         main=paste("Linear Fit from", sample.size, "Games with Result:", result))  
-    abline(lm.white.fit, col="red")
-    plot(lm.white.fit)
-    print(summary(lm.white.fit))
-    
-    plot(stats.df$b.mat, stats.df$b.mob,
-         xlab= "Black Material", ylab="Black Mobility", pch=20,
-         main=paste("Linear Fit from", sample.size, "Games with Result:", result)) 
-    abline(lm.black.fit, col="red")
-    plot(lm.black.fit)
-    print(summary(lm.black.fit)) 
-##########################################################################################
+    }
+    if (linear.fits){
+        lm.fits.simple(stats.df, sample.size, result)
+        lm.fits(stats.df, sample.size, result)
+    } 
     
     stats.mean <- rowMeans(stats.matrix) # faster than apply/mean
     stats.stdv <- apply(stats.matrix, 1, sd)
     rbind(stats.mean, stats.stdv) #return mean and std dev for w/b material and mobility
 }
+
+lm.fits <- function(stats.df, sample.size, result){
+    # linear fit of white mobility ~ white material
+    #               black mobility ~ black material
+    # and plot the models, including residuals
+    # When doing just mob ~ mat, both sides appear to have a slight
+    # quadratic curvature in the plot, so I added the quadratic terms here.
+    # Also fit the log(Mob) because otherwise plots showed heteroscedasticity
+    lm.white.fit <- lm(I(log(w.mob)) ~ w.mat + I(w.mat^2), data=stats.df) # log linear
+    lm.black.fit <- lm(I(log(b.mob)) ~ b.mat + I(b.mat^2), data=stats.df) # log linear
+    
+    par(mfrow=c(1,2)) # plot both regressions in single graph
+    plot(stats.df$w.mat, log(stats.df$w.mob), 
+         xlab= "White Material", ylab="log(White Mobility)", pch=20, col="blue",
+         main=paste("log(mobility)~material+material^2 \nfrom", sample.size, "Games with Result:", result))  
+    points(stats.df$w.mat,fitted(lm.white.fit),col="red", pch=20) # curve with quadratic term
+    plot(stats.df$b.mat, log(stats.df$b.mob),
+         xlab= "Black Material", ylab="log(Black Mobility)", pch=20, col="blue",
+         main=paste("log(mobility)~material+material^2 \nfrom", sample.size, "Games with Result:", result))  
+    points(stats.df$b.mat,fitted(lm.black.fit),col="red", pch=20) # curve with quadratic term
+    
+    print(summary(lm.white.fit))
+    print(summary(lm.black.fit)) 
+   
+    plot(lm.white.fit, which=1, caption=list("White Residuals vs. Fitted log(Mobility)"))
+    plot(lm.black.fit, which=1, caption=list("Black Residuals vs. Fitted log(Mobility)"))
+    par(mfrow=c(1,1)) # reset back to one plot per graph
+}   
+
+lm.fits.simple <- function(stats.df, sample.size, result){
+    # linear fit of white mobility ~ white material
+    #               black mobility ~ black material
+    # and plot the models, including residuals
+    lm.white.fit <- lm(w.mob ~ w.mat, data=stats.df) # simple linear
+    lm.black.fit <- lm(b.mob ~ b.mat, data=stats.df) # simple linear
+    
+    par(mfrow=c(1,2)) # plot both regressions in single graph
+    plot(stats.df$w.mat, stats.df$w.mob, 
+         xlab= "White Material", ylab="White Mobility", pch=20, col="blue",
+         main=paste("Simple Linear Regression\nfrom", sample.size, "Games with Result:", result))  
+    abline(lm.white.fit, lwd=3, col="red")
+    
+    plot(stats.df$b.mat, stats.df$b.mob,
+         xlab= "Black Material", ylab="Black Mobility", pch=20, col="blue",
+         main=paste("Simple Linear Regression\nfrom", sample.size, "Games with Result:", result))  
+    abline(lm.black.fit, lwd=3, col="red")
+    print(summary(lm.white.fit))
+    print(summary(lm.black.fit)) 
+    
+    plot(lm.white.fit, which=1, caption=list("White Residuals vs. Fitted Mobility"))
+    plot(lm.black.fit, which=1, caption=list("Black Residuals vs. Fitted Mobility"))
+    par(mfrow=c(1,1)) # reset back to one plot per graph
+}   
 
 # game.stats.single <- function(game.matrix){
 #     # return mean material and mobility from single game
@@ -333,7 +351,8 @@ game.stats.single <- function(game.matrix){
 # system.time(mat.mob <- get.mat.mob(moves.results.df)) 
 
 get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
-                                 num.games, num.cores, write.data.to.file) { 
+                                 num.games, num.cores, write.data.to.file, 
+                                 linear.fits) { 
     # df is a data frame of games with only one variable: pgn
     # game.result is a text string indicating the outcome of the games
     # being analyzed: black, white, draw, or all
@@ -391,7 +410,7 @@ get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
     # get final statistics
     mat.mob.array <- array(list(g.array))  
     lapply(mat.mob.array, game.stats.multiple, game.result, 
-           do.t, matmob.diffs.pop, write.data.to.file)
+           do.t, matmob.diffs.pop, write.data.to.file, linear.fits)
 }   
 
 visualize.move.data <- function(move.data, num.games, result){
@@ -404,7 +423,7 @@ visualize.move.data <- function(move.data, num.games, result){
     if (result=="white") outcome<-paste("Won by White")
     if (result=="draw")  outcome<-paste("that Resulted in a Draw")
     if (result=="all")   outcome<-paste("Randomly Selected")
-    
+    par(mfrow=c(2,2)) # put all 4 historgrams in one chart
     hist(as.numeric(p.df[1,]),                               # black material
          main=paste("Black Material in", num.games, "Expert-Level Games",
                     "\n", outcome),
@@ -428,6 +447,7 @@ visualize.move.data <- function(move.data, num.games, result){
                     "\n", outcome),
          xlab=paste("White Mobility Computed for", wht.moves, " White Moves"),
          col="green")
+    par(mfrow=c(1,1)) # reset back to giving a single plot
 }
 
 data.overview <- function(games, num.games, result){
@@ -451,7 +471,8 @@ data.overview <- function(games, num.games, result){
 }
 
 analyze.chess.games <- function(allgames, num.games, result="all", 
-                                do.t=TRUE, matmob.diffs.pop, write.data.to.file){
+                                do.t=TRUE, matmob.diffs.pop, 
+                                write.data.to.file, linear.fits){
     # this is the top-level function
     # analyze num.games from global dfgames where result is:
     # 'black', 'white', 'draw', or 'all' games regardless of outcome
@@ -478,11 +499,50 @@ analyze.chess.games <- function(allgames, num.games, result="all",
     games   <- as.data.frame(games[indices, ]) # games to analyze
     data.overview(games, num.games, result)    # summarize high-level stats of these games
     games   <- as.data.frame(games[ , "pgn"])  # keep only the pgn variable
+ ######################### I want to RETAIN the result to write it to file
+    ###################### But the parallel code dies when I pass it with 'result'
+#=========================================================================================================
     get.mat.mob.parallel(games, result, do.t, matmob.diffs.pop,
-                         num.games, detectCores(), write.data.to.file) # I have 8 cores
+                         num.games, detectCores(), 
+                         write.data.to.file, linear.fits) # I have 8 cores
 }
 
 # ==============================  t-test functions  ===========================
+
+Welch.t.test <- function(samp1.size, samp2.size, 
+                         samp1.mean, samp2.mean, 
+                         samp1.sd,   samp2.sd,
+                         test.type="two.sided", signif=0.95){
+    # I had to write my own, rather than use the built-in R function
+    # because I don't have both samples available at once in vectors,
+    # the population stats computed from an earlier run of my code
+    # are simply passed in as the params for sample 2.
+
+    df         <- deg.freedom(samp1.sd, samp2.sd, samp1.size, samp2.size)
+    t.value    <- t.stat.Welch(samp1.mean, samp2.mean, samp1.sd, samp2.sd, samp1.size, samp2.size)
+    
+    if (test.type=="upper"){
+        cutoff      <- qt(signif, df)
+        test.result <- t.value >= cutoff
+    }
+    if (test.type=="lower"){
+        cutoff      <- qt(1 - signif, df)
+        test.result <- t.value <= cutoff
+    }
+    if (test.type=="two.sided"){
+        half.alpha   <- (1 - signif)/2
+        lower.cutoff <- qt(half.alpha, df)
+        upper.cutoff <- qt(signif + half.alpha, df)
+        test.result  <- (t.value <= lower.cutoff) | (t.value >= upper.cutoff)
+    }
+    
+    if (test.type=="two.sided")
+        print(paste("t.value:", t.value, "LoCut:", lower.cutoff, "HiCut:", upper.cutoff, "Test type:", test.type))
+    else
+        print(paste("t.value:", t.value, "Cutoff:", cutoff, "Test type:", test.type))
+
+    test.result
+}
 
 t.stat.Welch <- function(s1.mean, s2.mean, s1.sd, s2.sd, n1, n2){
     # return t-statistic for Welch's t-test
@@ -547,42 +607,88 @@ paired.t.test <- function(game.result, stats.matrix, matmob.diffs.pop) {
     }
 }    
 
-# samp.siz.b <- 1000
-# samp.siz.p <- 5000
-# sd.b       <- 4.410876
-# sd.p       <- 4.354868
-# B.mob_b    <- 32.336095
-# B.mob_p    <- 30.839317
-# df         <- deg.freedom(sd.b, sd.p, samp.siz.b, samp.siz.p)
-# t.value    <- t.stat.Welch(B.mob_b, B.mob_p, sd.b, sd.p, samp.siz.b, samp.siz.p)
-# cutoff     <- qt(0.95, df)
-# t.value > cutoff
 
 # ============================== Set Control Params ============================
 
 piece.values <- data.frame(Piece=c("p", "n", "b", "r", "q"), 
                            Value=c( 1,   3,   3,   5,   9))
-sample.size  <- 10      # number of games to analyze from dfgames
 
-result       <- "all"   # black, white, draw or all 
-
-do.t.test    <- FALSE     # perform t.test or not on white vs. black stats
-
-mat.diff.pop <- 0.020653 # diff in white - black material in population
-
-mob.diff.pop <- 2.296723 # diff in white - black mobility in population
-
-save.data    <- TRUE     # write mat/mob to file or not
+# ===== Population parameters from an earlier run:
+pop.sample.size <- 5000       # largest sample yet used with result="all" 
+pop.white.mat   <- 29.574640
+pop.sd.w.mat    <- 5.650526
+pop.black.mat   <- 29.553987
+pop.sd.b.mat    <- 5.680532
+pop.white.mob   <- 33.13604
+pop.sd.w.mob    <- 4.86725
+pop.black.mob   <- 30.839317
+pop.sd.b.mob    <- 4.354868
+mat.diff.pop    <- pop.white.mat - pop.black.mat # 0.020653
+mob.diff.pop    <- pop.white.mob - pop.black.mob # 2.296723 
+# ========================
+sample.size     <- 1000        # number of games to analyze from dfgames
+result          <- "all"   # black, white, draw or all 
+# ========================
+do.t.test       <- FALSE     # perform t.test or not on white vs. black stats
+t.type.material <- "lower"   # values are: two.sided (default), lower, upper
+t.type.mobility <- "upper"   # values are: two.sided (default), lower, upper
+test.signif     <- 0.95      # statistical significance desired for tests
+# ========================
+save.data       <- FALSE     # write mat/mob to file or not
+linear.fits     <- TRUE      # do various linear fits within function game.stats.multiple
 
 # ============================= Analyze Chess Games ============================
 
 system.time(mat.mob <- analyze.chess.games(dfgames,   sample.size, result, 
-                               do.t.test, c(mat.diff.pop, mob.diff.pop), save.data))
+                               do.t.test, c(mat.diff.pop, mob.diff.pop), 
+                               save.data, linear.fits))
 
 # mat.mob <- analyze.chess.games(dfgames,   sample.size, result, do.t.test, 
-#                                c(mat.diff.pop, mob.diff.pop), save.data)
-
+#                                c(mat.diff.pop, mob.diff.pop), 
+#                                save.data, linear.fits)
 
 mat.mob[[1]][1,5] <- mat.mob[[1]][1,5] * sample.size
 
+if (do.t.test){
+    if (result=="white"){
+        mean.mat.winner    <- mat.mob[[1]][1,1]
+        mean.mat.sd.winner <- mat.mob[[1]][2,1]
+        mean.mob.winner    <- mat.mob[[1]][1,3]
+        mean.mob.sd.winner <- mat.mob[[1]][2,3]
+        population.mat     <- pop.white.mat
+        population.mat.sd  <- pop.sd.w.mat
+        population.mob     <- pop.white.mob
+        population.mob.sd  <- pop.sd.w.mob
+    }
+    else if (result=="black"){
+        mean.mat.winner    <- mat.mob[[1]][1,2]
+        mean.mat.sd.winner <- mat.mob[[1]][2,2]
+        mean.mob.winner    <- mat.mob[[1]][1,4]
+        mean.mob.sd.winner <- mat.mob[[1]][2,4]
+        population.mat     <- pop.black.mat
+        population.mat.sd  <- pop.sd.b.mat
+        population.mob     <- pop.black.mob
+        population.mob.sd  <- pop.sd.b.mob
+    }
+    else {
+        print("Cannot do Welch t-test on this data.")
+        return()
+    }
+    
+    # Test 1: Material of Winner vs. Population
+    winner.material <- Welch.t.test(sample.size,        pop.sample.size, 
+                                    mean.mat.winner,    population.mat, 
+                                    mean.mat.sd.winner, population.mat.sd,
+                                    test.type=t.type.material, signif=test.signif)
+
+    # Test 2: Mobility of Winner vs. Population
+    winner.mobility <- Welch.t.test(sample.size,        pop.sample.size, 
+                                    mean.mob.winner,    population.mob, 
+                                    mean.mob.sd.winner, population.mob.sd,
+                                    test.type=t.type.mobility, signif=test.signif)
+    print("Here are the results of the two Welch t-tests on material and mobility vs. the population:")
+    print(c(winner.material, winner.mobility))
+}
+
 mat.mob[[1]]
+
