@@ -626,7 +626,7 @@ pop.sd.b.mob    <- 4.354868
 mat.diff.pop    <- pop.white.mat - pop.black.mat # 0.020653
 mob.diff.pop    <- pop.white.mob - pop.black.mob # 2.296723 
 # ========================
-sample.size     <- 1000        # number of games to analyze from dfgames
+sample.size     <- 5000        # number of games to analyze from dfgames
 result          <- "all"   # black, white, draw or all 
 # ========================
 do.t.test       <- FALSE     # perform t.test or not on white vs. black stats
