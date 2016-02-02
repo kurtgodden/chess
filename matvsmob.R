@@ -212,6 +212,10 @@ material.mobility.game.matrix <- function(pgn) {
                             })
     mat            <- material(board, piece.values) # material at end position
     mob            <- mobility(board)               # mobility at end position
+#    board$in_checkmate() -> TRUE if game ended in mate
+    # Maybe I can add row 4, and at every position return T/F for this value.
+    # almost all will be F, but after processing is over, we just take sum
+    # of row 4 to find # of checkmates.  ????
     cbind(mat.mob.matrix, c(mat, mob))   # return mat.mob including end position 
 }
 
@@ -220,15 +224,17 @@ mat.mob.by.result <- function(pgns){
     # pgns is a vector of pgn strings, i.e. games
     if (length(pgns)>1) {
         game.array  <- apply(as.matrix(pgns), 1, material.mobility.game.matrix)
+        game.array
     }
     else { #there is only one game in the group
         game.matrix <- list(material.mobility.game.matrix(pgns))
+        game.matrix
     }
 }
 
-game.stats.multiple <- function(game.array, game.result, 
-                                do.t, matmob.diffs.pop, 
-                                write.data.to.file, linear.fits){
+game.stats.multiple <- function(game.array, game.result, do.t, matmob.diffs.pop, 
+                                write.data.to.file, linear.fits, 
+                                result.vector, index.vector){
     # return mean material and mobility from multiple games
     # vapply is faster than sapply and also provides names
     # if do.t is TRUE, we perform paired t.test of white vs. black stats
@@ -238,18 +244,25 @@ game.stats.multiple <- function(game.array, game.result,
     # linear.fits controls if we do the lm() calls or not
     
     stats.matrix <- vapply(game.array, game.stats.single,
-                           c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0, "mates"=0)) 
+                           c("w.mat"=0, "b.mat"=0, "w.mob"=0,"b.mob"=0)) #, "mates"=0)) 
     # each column of matrix is a game
     # row 1 is mean white material for each game
     # row 2 is mean black material
     # row 3 is mean white mobility
     # row 4 is mean black mobility
-    # row 5 is 1 if game ended in checkmate
+    # NOT YET CORRECT: row 5 is 1 if game ended in checkmate
     
     if (do.t==TRUE) paired.t.test(game.result, stats.matrix, matmob.diffs.pop)
     
     # Create data frame if we are going to write to a file or do lm()
-    if (write.data.to.file | linear.fits) stats.df <- as.data.frame(t(stats.matrix))
+ 
+    if (write.data.to.file | linear.fits | game.result=="all") {
+        stats.df <- as.data.frame(t(stats.matrix))
+        stats.df$result <- result.vector
+        stats.df$index  <- index.vector
+    }
+    
+    if (game.result=="all") plot.outcome.distributions(stats.df, sample.size)
     
     if (write.data.to.file) {
         fname <- paste("stats", sample.size, "games", "result", result, "csv", sep=".")
@@ -265,38 +278,70 @@ game.stats.multiple <- function(game.array, game.result,
     rbind(stats.mean, stats.stdv) #return mean and std dev for w/b material and mobility
 }
 
-lm.fits <- function(stats.df, sample.size, result){
+plot.outcome.distributions <- function(stats.df, sample.size) { 
+    #scatterplot to see outcome groupings, ignoring unknown results, i.e. *
+    stats.df <- stats.df[stats.df$result != "*", ]
+
+    par(bg = "gray62")
+    palette(c("black", "white", "red"))
+    colors <- as.factor(stats.df$result)
+    
+    mat.diff <- stats.df$w.mat - stats.df$b.mat
+    mob.diff <- stats.df$w.mob - stats.df$b.mob
+    plot(mat.diff, 
+         mob.diff,
+         xlab= "Material Advantage: (White - Black)", 
+         ylab= "Mobility Advantage: (White - Black)", 
+         pch=20, cex=0.7, col=colors,
+         main=paste("Distributions of", sample.size, "Game Outcomes"))  
+    legend("topleft", bty="n", cex=0.8, 
+           col=1:3, pch=20, c("Black Win", "White Win", "Draw"))
+    abline(h=0, v=0, lty=2)
+    palette("default")
+    par(bg = "white")
+}
+
+lm.fits <- function(stats.df, sample.size, result){ 
     # linear fit of white mobility ~ white material
     #               black mobility ~ black material
     # and plot the models, including residuals
     # When doing just mob ~ mat, both sides appear to have a slight
     # quadratic curvature in the plot, so I added the quadratic terms here.
     # Also fit the log(Mob) because otherwise plots showed heteroscedasticity
-    lm.white.fit <- lm(I(log(w.mob)) ~ w.mat + I(w.mat^2), data=stats.df) # log linear
-    lm.black.fit <- lm(I(log(b.mob)) ~ b.mat + I(b.mat^2), data=stats.df) # log linear
-    
+    lm.white.fit <- lm(I(log(w.mob)) ~ w.mat + I(w.mat^2), data=stats.df) 
+    lm.black.fit <- lm(I(log(b.mob)) ~ b.mat + I(b.mat^2), data=stats.df) 
+    # Models with an interaction term with opponent's material
+#     lm.white.fit <- lm(I(log(w.mob)) ~ w.mat*b.mat + I(w.mat^2), data=stats.df) 
+#     lm.black.fit <- lm(I(log(b.mob)) ~ b.mat*w.mat + I(b.mat^2), data=stats.df)
+# w.caption <- "log(Wmob) = Wmat + Wmat^2 + Bmat +(Bmat*Wmat)"
+    w.caption <- paste("log(W.mobility) = W.material + W.material^2\nfrom", 
+                       sample.size, "Games with Result:", result)
     par(mfrow=c(1,2)) # plot both regressions in single graph
-    plot(stats.df$w.mat, log(stats.df$w.mob), 
+    plot(stats.df$w.mat, log(stats.df$w.mob),    
          xlab= "White Material", ylab="log(White Mobility)", pch=20, col="blue",
-         main=paste("log(mobility)~material+material^2 \nfrom", sample.size, "Games with Result:", result))  
-    points(stats.df$w.mat,fitted(lm.white.fit),col="red", pch=20) # curve with quadratic term
+         main=w.caption) 
+    
+    b.caption <- paste("log(B.mobility) = B.material + B.material^2\nfrom", 
+                       sample.size, "Games with Result:", result)
+    points(stats.df$w.mat,fitted(lm.white.fit),col="red", pch=20)  # curve with quadratic term  
     plot(stats.df$b.mat, log(stats.df$b.mob),
          xlab= "Black Material", ylab="log(Black Mobility)", pch=20, col="blue",
-         main=paste("log(mobility)~material+material^2 \nfrom", sample.size, "Games with Result:", result))  
-    points(stats.df$b.mat,fitted(lm.black.fit),col="red", pch=20) # curve with quadratic term
+         main=b.caption)     
+    points(stats.df$b.mat,fitted(lm.black.fit),col="red", pch=20) # curve with quadratic term  
     
-    print(summary(lm.white.fit))
-    print(summary(lm.black.fit)) 
+    print(summary(lm.white.fit))  
+    print(summary(lm.black.fit))   
    
-    plot(lm.white.fit, which=1, caption=list("White Residuals vs. Fitted log(Mobility)"))
-    plot(lm.black.fit, which=1, caption=list("Black Residuals vs. Fitted log(Mobility)"))
+    plot(lm.white.fit, which=1, caption=list("White Residuals vs. Fitted log(Mobility)"))  
+    plot(lm.black.fit, which=1, caption=list("Black Residuals vs. Fitted log(Mobility)"))  
     par(mfrow=c(1,1)) # reset back to one plot per graph
-}   
+}    
 
 lm.fits.simple <- function(stats.df, sample.size, result){
     # linear fit of white mobility ~ white material
     #               black mobility ~ black material
     # and plot the models, including residuals
+    
     lm.white.fit <- lm(w.mob ~ w.mat, data=stats.df) # simple linear
     lm.black.fit <- lm(b.mob ~ b.mat, data=stats.df) # simple linear
     
@@ -335,11 +380,14 @@ game.stats.single <- function(game.matrix){
     
     white.moves <- game.matrix[3, c(TRUE, FALSE)]
     black.moves <- game.matrix[3, c(FALSE, TRUE)]
-    checkmate   <- sum(white.moves==0, black.moves==0) # did game end in mate?
+    
+#     # the next line is wrong because there are 0 moves in a stalemate!
+#     checkmate   <- sum(white.moves==0, black.moves==0) # did game end in mate?
     
     w.mob <- mean(white.moves) # mean white mobility
     b.mob <- mean(black.moves) # mean black mobility
-    c(w.mat, b.mat, w.mob, b.mob, checkmate)
+#    c(w.mat, b.mat, w.mob, b.mob, checkmate)
+    c(w.mat, b.mat, w.mob, b.mob)
 }
 
 
@@ -353,7 +401,7 @@ game.stats.single <- function(game.matrix){
 get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
                                  num.games, num.cores, write.data.to.file, 
                                  linear.fits) { 
-    # df is a data frame of games with only one variable: pgn
+    # df is a data frame of games with 3 vars: index (to db), result, pgn
     # game.result is a text string indicating the outcome of the games
     # being analyzed: black, white, draw, or all
     # do.t is boolean and controls whether paired t.test is performed
@@ -383,14 +431,14 @@ get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
     g8.last        <- num.games
     
     # split df into 8 subsets to process one per core
-    g1 <- df[g1.first:g1.last, ]
-    g2 <- df[g2.first:g2.last, ] 
-    g3 <- df[g3.first:g3.last, ] 
-    g4 <- df[g4.first:g4.last, ] 
-    g5 <- df[g5.first:g5.last, ] 
-    g6 <- df[g6.first:g6.last, ] 
-    g7 <- df[g7.first:g7.last, ] 
-    g8 <- df[g8.first:g8.last, ] 
+    g1 <- df[g1.first:g1.last, "pgn"]
+    g2 <- df[g2.first:g2.last, "pgn"] 
+    g3 <- df[g3.first:g3.last, "pgn"] 
+    g4 <- df[g4.first:g4.last, "pgn"] 
+    g5 <- df[g5.first:g5.last, "pgn"] 
+    g6 <- df[g6.first:g6.last, "pgn"] 
+    g7 <- df[g7.first:g7.last, "pgn"] 
+    g8 <- df[g8.first:g8.last, "pgn"] 
     
     mat.mob.array <- mclapply(list(g1, g2, g3, g4, g5, g6, g7, g8), 
                               mat.mob.by.result, 
@@ -405,17 +453,26 @@ get.mat.mob.parallel <- function(df, game.result, do.t, matmob.diffs.pop,
                              mat.mob.array[[7]]),
                       mat.mob.array[[8]])  
     # plot histograms using stats from every move of every game
-    visualize.move.data(g.array, num.games, game.result) 
+    visualize.move.data(g.array, num.games, game.result, write.data.to.file) 
     
     # get final statistics
     mat.mob.array <- array(list(g.array))  
     lapply(mat.mob.array, game.stats.multiple, game.result, 
-           do.t, matmob.diffs.pop, write.data.to.file, linear.fits)
+           do.t, matmob.diffs.pop, write.data.to.file, 
+           linear.fits, df$result, df$index)
 }   
 
-visualize.move.data <- function(move.data, num.games, result){
+visualize.move.data <- function(move.data, num.games, 
+                                result, write.data.to.file){
     # plot histograms of data
+    # ============================================= NEED TO SAVE DATA WHEN 
+    #       write.data.to.file IS TRUE BUT ALSO NEED TO SAVE GAME INDEX, RESULT, AND ??
     p.df      <- as.data.frame(move.data)
+    # Row 1: White material
+    # Row 2: Black material
+    # Row 3: Mobility
+    # The automatic column names indicate when a new game has started, but also
+    # you can tell when the material values get reset back to 39
     num.moves <- ncol(p.df)
     wht.moves <- ceiling(num.moves/2)
     blk.moves <- num.moves - wht.moves
@@ -498,9 +555,10 @@ analyze.chess.games <- function(allgames, num.games, result="all",
     indices <- sample(nrow(games), num.games)
     games   <- as.data.frame(games[indices, ]) # games to analyze
     data.overview(games, num.games, result)    # summarize high-level stats of these games
-    games   <- as.data.frame(games[ , "pgn"])  # keep only the pgn variable
- ######################### I want to RETAIN the result to write it to file
-    ###################### But the parallel code dies when I pass it with 'result'
+    # add indices as new var (so I can find interesting games)
+    # So 'games' df will contain 3 vars: index (into subset 'games'), result and pgn.
+    games$index <- indices                     
+    
 #=========================================================================================================
     get.mat.mob.parallel(games, result, do.t, matmob.diffs.pop,
                          num.games, detectCores(), 
@@ -626,7 +684,7 @@ pop.sd.b.mob    <- 4.354868
 mat.diff.pop    <- pop.white.mat - pop.black.mat # 0.020653
 mob.diff.pop    <- pop.white.mob - pop.black.mob # 2.296723 
 # ========================
-sample.size     <- 5000        # number of games to analyze from dfgames
+sample.size     <- 1000     # number of games to analyze from dfgames
 result          <- "all"   # black, white, draw or all 
 # ========================
 do.t.test       <- FALSE     # perform t.test or not on white vs. black stats
@@ -635,7 +693,7 @@ t.type.mobility <- "upper"   # values are: two.sided (default), lower, upper
 test.signif     <- 0.95      # statistical significance desired for tests
 # ========================
 save.data       <- FALSE     # write mat/mob to file or not
-linear.fits     <- TRUE      # do various linear fits within function game.stats.multiple
+linear.fits     <- FALSE      # do various linear fits within function game.stats.multiple
 
 # ============================= Analyze Chess Games ============================
 
@@ -647,7 +705,7 @@ system.time(mat.mob <- analyze.chess.games(dfgames,   sample.size, result,
 #                                c(mat.diff.pop, mob.diff.pop), 
 #                                save.data, linear.fits)
 
-mat.mob[[1]][1,5] <- mat.mob[[1]][1,5] * sample.size
+# mat.mob[[1]][1,5] <- mat.mob[[1]][1,5] * sample.size # this has to do with the checkmates, which are not yet working
 
 if (do.t.test){
     if (result=="white"){
